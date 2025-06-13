@@ -1,0 +1,24 @@
+{
+  "idf.adapterTargetName": "esp32s3",
+  "idf.portWin": "COM4",
+  "files.associations": {
+    "esp_lcd_touch.h": "c",
+    "esp_lcd_sh8601.h": "c"
+  },
+  "idf.flashType": "UART",
+  "idf.customExtraVars": {
+    "OPENOCD_SCRIPTS": "e:\\evscode_esp32_tool\\tools\\openocd-esp32\\v0.12.0-esp32-20240318/openocd-esp32/share/openocd/scripts",
+    "IDF_CCACHE_ENABLE": "1",
+    "ESP_ROM_ELF_DIR": "e:\\evscode_esp32_tool\\tools\\esp-rom-elfs\\20230320/",
+    "IDF_TARGET": "esp32s3"
+  },
+  "clangd.path": "D:\\Espressif\\tools\\esp-clang\\esp-18.1.2_20240912\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=D:\\Espressif\\tools\\xtensa-esp-elf\\esp-14.2.0_20241119\\xtensa-esp-elf\\bin\\xtensa-esp32s3-elf-gcc.exe",
+    "--compile-commands-dir=f:\\watch_diy\\DO0178FMST03_ESP32_S3_QSPI (1)\\DO0178FMST03_ESP32_S3_QSPI\\build"
+  ],
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ]
+}
