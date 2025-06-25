@@ -1,0 +1,43 @@
+# ESP32/IDF typical ignores
+build/
+*.bin
+*.elf
+*.map
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.log
+sdkconfig
+sdkconfig.old
+sdkconfig.defaults
+sdkconfig.*.bak
+*.orig
+*.swp
+*.swo
+*.bak
+*.tmp
+*.user
+*.vscode/
+*.DS_Store
+*.idea/
+*.env
+*.venv
+*.code-workspace
+*.ipynb_checkpoints/
+*.pdf
+*.f3z
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.cmake
+# ESP-IDF managed_components
+managed_components/*/build/
+managed_components/*/CMakeFiles/
+managed_components/*/cmake_install.cmake
+# Partition table
+partitions.csv
+# Misc
+*.orig
+*.rej

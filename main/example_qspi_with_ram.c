@@ -110,87 +110,19 @@ static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
     {0x51, (uint8_t []){0xFF}, 1, 0},
 };
 
+static lv_display_t*  disp_drv;    
+volatile bool disp_flush_enabled = true;
+
 static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
     // lv_disp_drv_t *disp_driver = (lv_disp_drv_t *)user_ctx;
-    // lv_disp_flush_ready(disp_driver);
+    lv_disp_flush_ready(disp_drv);
+    // if (disp_drv != NULL) {
+    //     lv_display_flush_ready(disp_drv);     //因为是DMA 应该加到这里  就看example_notify_lvgl_flush_ready的底层实现了
+    // }
     return false;
 }
 
-// static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
-// {
-//     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) drv->user_data;
-//     const int offsetx1 = area->x1;
-//     const int offsetx2 = area->x2;
-//     const int offsety1 = area->y1;
-//     const int offsety2 = area->y2;
-
-// #if LCD_BIT_PER_PIXEL == 24
-//     uint8_t *to = (uint8_t *)color_map;
-//     uint8_t temp = 0;
-//     uint16_t pixel_num = (offsetx2 - offsetx1 + 1) * (offsety2 - offsety1 + 1);
-
-//     // Special dealing for first pixel
-//     temp = color_map[0].ch.blue;
-//     *to++ = color_map[0].ch.red;
-//     *to++ = color_map[0].ch.green;
-//     *to++ = temp;
-//     // Normal dealing for other pixels
-//     for (int i = 1; i < pixel_num; i++) {
-//         *to++ = color_map[i].ch.red;
-//         *to++ = color_map[i].ch.green;
-//         *to++ = color_map[i].ch.blue;
-//     }
-// #endif
-
-//     // copy a buffer's content to a specific area of the display
-//     esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
-// }
-
-/* Rotate display and touch, when rotated screen in LVGL. Called when driver parameters are updated. */
-// static void example_lvgl_update_cb(lv_disp_drv_t *drv)
-// {
-//     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) drv->user_data;
-
-//     switch (drv->rotated) {
-//     case LV_DISP_ROT_NONE:
-//         // Rotate LCD display
-//         esp_lcd_panel_swap_xy(panel_handle, false);
-//         esp_lcd_panel_mirror(panel_handle, true, false);
-//         break;
-//     case LV_DISP_ROT_90:
-//         // Rotate LCD display
-//         esp_lcd_panel_swap_xy(panel_handle, true);
-//         esp_lcd_panel_mirror(panel_handle, true, true);
-//         break;
-//     case LV_DISP_ROT_180:
-//         // Rotate LCD display
-//         esp_lcd_panel_swap_xy(panel_handle, false);
-//         esp_lcd_panel_mirror(panel_handle, false, true);
-//         break;
-//     case LV_DISP_ROT_270:
-//         // Rotate LCD display
-//         esp_lcd_panel_swap_xy(panel_handle, true);
-//         esp_lcd_panel_mirror(panel_handle, false, false);
-//         break;
-//     }
-// }
-
-// void example_lvgl_rounder_cb(struct _lv_disp_drv_t *disp_drv, lv_area_t *area)
-// {
-//     uint16_t x1 = area->x1;
-//     uint16_t x2 = area->x2;
-
-//     uint16_t y1 = area->y1;
-//     uint16_t y2 = area->y2;
-
-//     // round the start of coordinate down to the nearest 2M number
-//     area->x1 = (x1 >> 1) << 1;
-//     area->y1 = (y1 >> 1) << 1;
-//     // round the end of coordinate up to the nearest 2N+1 number
-//     area->x2 = ((x2 >> 1) << 1) + 1;
-//     area->y2 = ((y2 >> 1) << 1) + 1;
-// }
 
 #if EXAMPLE_USE_TOUCH
 static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
@@ -216,52 +148,33 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 }
 #endif
 
-// static void example_increase_lvgl_tick(void *arg)
-// {
-//     /* Tell LVGL how many milliseconds has elapsed */
-//     lv_tick_inc(EXAMPLE_LVGL_TICK_PERIOD_MS);
-// }
+static void disp_flush(lv_display_t * disp_drv, const lv_area_t * area, uint8_t * px_map)
+{
+    if(disp_flush_enabled) {
+        esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp_drv);
+        esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
+    }
 
-// static bool example_lvgl_lock(int timeout_ms)
-// {
-//     assert(lvgl_mux && "bsp_display_start must be called first");
+    /*IMPORTANT!!!
+     *Inform the graphics library that you are ready with the flushing*/
+    // lv_display_flush_ready(disp_drv); 
+}
 
-//     const TickType_t timeout_ticks = (timeout_ms == -1) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
-//     return xSemaphoreTake(lvgl_mux, timeout_ticks) == pdTRUE;
-// }
-
-// static void example_lvgl_unlock(void)
-// {
-//     assert(lvgl_mux && "bsp_display_start must be called first");
-//     xSemaphoreGive(lvgl_mux);
-// }
-
-// static void example_lvgl_port_task(void *arg)
-// {
-//     ESP_LOGI(TAG, "Starting LVGL task");
-//     uint32_t task_delay_ms = EXAMPLE_LVGL_TASK_MAX_DELAY_MS;
-//     while (1) {
-//         // Lock the mutex due to the LVGL APIs are not thread-safe
-//         if (example_lvgl_lock(-1)) {
-//             task_delay_ms = lv_timer_handler();
-//             // Release the mutex
-//             example_lvgl_unlock();
-//         }
-//         if (task_delay_ms > EXAMPLE_LVGL_TASK_MAX_DELAY_MS) {
-//             task_delay_ms = EXAMPLE_LVGL_TASK_MAX_DELAY_MS;
-//         } else if (task_delay_ms < EXAMPLE_LVGL_TASK_MIN_DELAY_MS) {
-//             task_delay_ms = EXAMPLE_LVGL_TASK_MIN_DELAY_MS;
-//         }
-//         vTaskDelay(pdMS_TO_TICKS(task_delay_ms));
-//     }
-// }
+/**
+ * @brief  Safe read from 'elapsed_power_on_time_in_ms'
+ */
+uint32_t  my_tick_get_cb()
+{
+    // uint32_t ms = esp_timer_get_time() / 1000;
+    // printf("Current time: %u ms\n", ms);
+    return esp_timer_get_time() / 1000;
+}
 
 void app_main(void)
 {
     // static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
-    static lv_disp_drv_t disp_drv;      // contains callback functions
-
-    // Set GPIO11 high
+    // contains callback functions
+    // Set GPIO11 high  这是屏幕的电源使能
     gpio_config_t io_conf = {
         .pin_bit_mask = 1ULL << 11,
         .mode = GPIO_MODE_OUTPUT,
@@ -319,26 +232,12 @@ void app_main(void)
     // user can flush pre-defined pattern to the screen before we turn on the screen or backlight
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-    // 画一个100x100的白色正方形
-    uint16_t square_width = 100;
-    uint16_t square_height = 100;
-    uint16_t square_x = 0;
-    uint16_t square_y = 0;
-
-    // 分配缓冲区，RGB565格式（16位）
-    uint16_t *white_buf = heap_caps_malloc(square_width * square_height * sizeof(uint16_t), MALLOC_CAP_DMA);
-    assert(white_buf);
-
-    // 填充为白色（RGB565: 0xFFFF）
-    for (int i = 0; i < square_width * square_height; ++i) {
-        white_buf[i] = 0xFFFF;
-    }
-
-    // 绘制到屏幕
-    esp_lcd_panel_draw_bitmap(panel_handle, square_x, square_y, square_x + square_width, square_y + square_height, white_buf);
-
-    // 释放缓冲区
-    free(white_buf);
+    // 使用 esp_lcd_panel_init 相关接口画一个 10x10 的框
+    // 这里只能直接操作底层显存，画一个 10x10 区域为白色
+    // uint16_t color = 0x0000; // 16位黑色
+    // uint16_t buf[10 * 10];
+    // for(int i = 0; i < 100; i++) buf[i] = color;
+    // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 100, 100, buf);
 
 #if EXAMPLE_USE_TOUCH
     ESP_LOGI(TAG, "Initialize I2C bus");
@@ -385,69 +284,32 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Initialize LVGL library");
     lv_init();
-    // alloc draw buffers used by LVGL
-    // it's recommended to choose the size of the draw buffer(s) to be at least 1/10 screen sized
-//     lv_color_t *buf1 = heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
-//     assert(buf1);
-//     lv_color_t *buf2 = heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
-//     assert(buf2);
-//     // initialize LVGL draw buffers
-//     lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT);
+    lv_tick_set_cb(my_tick_get_cb);
 
-//     ESP_LOGI(TAG, "Register display driver to LVGL");
-//     lv_disp_drv_init(&disp_drv);
-//     disp_drv.hor_res = EXAMPLE_LCD_H_RES;
-//     disp_drv.ver_res = EXAMPLE_LCD_V_RES;
-//     disp_drv.flush_cb = example_lvgl_flush_cb;
-//     disp_drv.rounder_cb = example_lvgl_rounder_cb;
-//     disp_drv.drv_update_cb = example_lvgl_update_cb;
-//     disp_drv.draw_buf = &disp_buf;
-//     disp_drv.user_data = panel_handle;
-//     lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
+    disp_drv = lv_display_create(EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
+    // 绑定 panel_handle 到 LVGL display 的 user_data
+    lv_display_set_user_data(disp_drv, panel_handle);
+    lv_display_set_flush_cb(disp_drv, disp_flush);
 
-//     ESP_LOGI(TAG, "Install LVGL tick timer");
-//     // Tick interface for LVGL (using esp_timer to generate 2ms periodic event)
-//     const esp_timer_create_args_t lvgl_tick_timer_args = {
-//         .callback = &example_increase_lvgl_tick,
-//         .name = "lvgl_tick"
-//     };
-//     esp_timer_handle_t lvgl_tick_timer = NULL;
-//     ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
-//     ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000));
 
-// #if EXAMPLE_USE_TOUCH
-//     static lv_indev_drv_t indev_drv;    // Input device driver (Touch)
-//     lv_indev_drv_init(&indev_drv);
-//     indev_drv.type = LV_INDEV_TYPE_POINTER;
-//     indev_drv.disp = disp;
-//     indev_drv.read_cb = example_lvgl_touch_cb;
-//     indev_drv.user_data = tp;
-//     lv_indev_drv_register(&indev_drv);
-// #endif
+    LV_ATTRIBUTE_MEM_ALIGN
+    static uint8_t *buf_1_1 = NULL;
+    buf_1_1 = (uint8_t *)heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES/4 * (LCD_BIT_PER_PIXEL / 8), MALLOC_CAP_DMA);
+    assert(buf_1_1);
+    lv_display_set_buffers(disp_drv, buf_1_1, NULL, EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES/4 * (LCD_BIT_PER_PIXEL / 8), LV_DISPLAY_RENDER_MODE_PARTIAL);
 
-//     lvgl_mux = xSemaphoreCreateMutex();
-//     assert(lvgl_mux);
-//     xTaskCreate(example_lvgl_port_task, "LVGL", EXAMPLE_LVGL_TASK_STACK_SIZE, NULL, EXAMPLE_LVGL_TASK_PRIORITY, NULL);
+    // 创建一个按钮并设置标签
+    // lv_obj_t *btn = lv_btn_create(lv_scr_act());
+    // lv_obj_center(btn);
 
-//     ESP_LOGI(TAG, "Display LVGL demos");
-//     // Lock the mutex due to the LVGL APIs are not thread-safe
-//     if (example_lvgl_lock(-1)) {
-        
-//         lv_demo_widgets();      /* A widgets example */
-//         lv_demo_music();        /* A modern, smartphone-like music player demo. */
-//         // lv_demo_stress();       /* A stress test for LVGL. */
-//         //lv_demo_benchmark();    /* A demo to measure the performance of LVGL or to compare different settings. */
+    // lv_obj_t *label = lv_label_create(btn);
+    // lv_label_set_text(label, "button");
+    // lv_obj_center(label);
 
-//         // Release the mutex
-//         example_lvgl_unlock();
-//     }
+    lv_demo_widgets();
+
+    while(1) {
+        lv_timer_periodic_handler();
+        vTaskDelay(pdMS_TO_TICKS(5)); // 建议延时 2~10ms
+    }
 }
-
-
-//1.78 inch AMOLED from DWO LIMITED
-//Part number: DO0180FMST03-QSPI  / DO0180FMST06-QSPI  / DO0180FMST07-QSPI  / DO0180FMST07-QSPI  / DO0180FMST08-QSPI  / DO0180FMST09-QSPI  / DO0180FMST10-QSPI
-// Size: 1.78 inch
-// Resolution: 368x448
-// Signal interface:  QSPI
-//For more product information, please visit www.dwo.net.cn    
-
