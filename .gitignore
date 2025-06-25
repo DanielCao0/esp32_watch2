@@ -41,3 +41,4 @@ partitions.csv
 # Misc
 *.orig
 *.rej
+managed_components/

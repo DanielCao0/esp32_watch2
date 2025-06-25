@@ -152,12 +152,18 @@ static void disp_flush(lv_display_t * disp_drv, const lv_area_t * area, uint8_t 
 {
     if(disp_flush_enabled) {
         esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp_drv);
+        // 进行字节序转换（小端转大端）
+        int pixel_count = (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1);
+        uint16_t *buf = (uint16_t *)px_map;
+        for(int i = 0; i < pixel_count; i++) {
+            buf[i] = (buf[i] >> 8) | (buf[i] << 8);
+        }
         esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
     }
 
     /*IMPORTANT!!!
      *Inform the graphics library that you are ready with the flushing*/
-    // lv_display_flush_ready(disp_drv); 
+    //lv_display_flush_ready(disp_drv);
 }
 
 /**
@@ -299,17 +305,19 @@ void app_main(void)
     lv_display_set_buffers(disp_drv, buf_1_1, NULL, EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES/4 * (LCD_BIT_PER_PIXEL / 8), LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     // 创建一个按钮并设置标签
-    // lv_obj_t *btn = lv_btn_create(lv_scr_act());
-    // lv_obj_center(btn);
+    lv_obj_t *btn = lv_btn_create(lv_scr_act());
+    lv_obj_center(btn);
 
-    // lv_obj_t *label = lv_label_create(btn);
-    // lv_label_set_text(label, "button");
-    // lv_obj_center(label);
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text(label, "button");
+    lv_obj_center(label);
 
     lv_demo_widgets();
+    // lv_demo_music();
+    lv_demo_stress();
+    ESP_LOGI(TAG, "testing lvgl task");
 
     while(1) {
-        lv_timer_periodic_handler();
-        vTaskDelay(pdMS_TO_TICKS(5)); // 建议延时 2~10ms
+        lv_timer_handler_run_in_period(5); /* run lv_timer_handler() every 5ms */
     }
 }
