@@ -155,7 +155,16 @@ static void disp_flush(lv_display_t * disp_drv, const lv_area_t * area, uint8_t 
         // 进行字节序转换（小端转大端）
         int pixel_count = (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1);
         uint16_t *buf = (uint16_t *)px_map;
-        for(int i = 0; i < pixel_count; i++) {
+        int i = 0;
+        // 每次处理4个像素
+        for (; i <= pixel_count - 4; i += 4) {
+            buf[i]     = (buf[i] >> 8) | (buf[i] << 8);
+            buf[i + 1] = (buf[i + 1] >> 8) | (buf[i + 1] << 8);
+            buf[i + 2] = (buf[i + 2] >> 8) | (buf[i + 2] << 8);
+            buf[i + 3] = (buf[i + 3] >> 8) | (buf[i + 3] << 8);
+        }
+        // 处理剩余像素
+        for (; i < pixel_count; i++) {
             buf[i] = (buf[i] >> 8) | (buf[i] << 8);
         }
         esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
@@ -300,9 +309,14 @@ void app_main(void)
 
     LV_ATTRIBUTE_MEM_ALIGN
     static uint8_t *buf_1_1 = NULL;
-    buf_1_1 = (uint8_t *)heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES/4 * (LCD_BIT_PER_PIXEL / 8), MALLOC_CAP_DMA);
+    LV_ATTRIBUTE_MEM_ALIGN
+    static uint8_t *buf_1_2 = NULL;
+    size_t buf_size = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES/6 * (LCD_BIT_PER_PIXEL / 8);
+    buf_1_1 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
+    buf_1_2 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
     assert(buf_1_1);
-    lv_display_set_buffers(disp_drv, buf_1_1, NULL, EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES/4 * (LCD_BIT_PER_PIXEL / 8), LV_DISPLAY_RENDER_MODE_PARTIAL);
+    assert(buf_1_2);
+    lv_display_set_buffers(disp_drv, buf_1_1, buf_1_2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     // 创建一个按钮并设置标签
     lv_obj_t *btn = lv_btn_create(lv_scr_act());
@@ -312,9 +326,7 @@ void app_main(void)
     lv_label_set_text(label, "button");
     lv_obj_center(label);
 
-    lv_demo_widgets();
-    // lv_demo_music();
-    lv_demo_stress();
+    lv_demo_benchmark();
     ESP_LOGI(TAG, "testing lvgl task");
 
     while(1) {
