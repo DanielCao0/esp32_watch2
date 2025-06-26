@@ -73,7 +73,7 @@ static const char *TAG = "example";
 #define EXAMPLE_LCD_H_RES              368
 #define EXAMPLE_LCD_V_RES              448
 
-#define EXAMPLE_USE_TOUCH               0
+#define EXAMPLE_USE_TOUCH               1
 
 #if EXAMPLE_USE_TOUCH
 #define EXAMPLE_PIN_NUM_TOUCH_SCL         (GPIO_NUM_3)
@@ -125,11 +125,9 @@ static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io, 
 
 
 #if EXAMPLE_USE_TOUCH
-static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
+static void example_lvgl_touch_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    esp_lcd_touch_handle_t tp = (esp_lcd_touch_handle_t)drv->user_data;
-    assert(tp);
-
+  
     uint16_t tp_x;
     uint16_t tp_y;
     uint8_t tp_cnt = 0;
@@ -318,6 +316,11 @@ void app_main(void)
     assert(buf_1_2);
     lv_display_set_buffers(disp_drv, buf_1_1, buf_1_2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
+    lv_indev_t * indev = lv_indev_create();        /* Create input device connected to Default Display. */
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);   /* Touch pad is a pointer-like device. */
+    lv_indev_set_read_cb(indev, example_lvgl_touch_cb);    /* Set driver function. */
+    lv_indev_set_user_data(indev, tp);    /* 绑定 tp 句柄到 user_data，供回调使用 */
+
     // 创建一个按钮并设置标签
     lv_obj_t *btn = lv_btn_create(lv_scr_act());
     lv_obj_center(btn);
@@ -326,8 +329,8 @@ void app_main(void)
     lv_label_set_text(label, "button");
     lv_obj_center(label);
 
-    lv_demo_benchmark();
-    ESP_LOGI(TAG, "testing lvgl task");
+    // lv_demo_benchmark();
+    // ESP_LOGI(TAG, "testing lvgl task");
 
     while(1) {
         lv_timer_handler_run_in_period(5); /* run lv_timer_handler() every 5ms */
