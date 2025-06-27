@@ -14,3 +14,7 @@ dependencies:
   lvgl/lvgl:
     version: "^9"
     public: true
+
+  led_strip:
+    version: "*"
+    public: true
