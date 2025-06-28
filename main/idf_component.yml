@@ -1,20 +1,21 @@
-version: "1.0.0"
+version: 1.0.0
 
 dependencies:
-  idf: ">5.0.4,!=5.1.1"
+  idf: '>5.0.4,!=5.1.1'
 
   esp_lcd_touch_ft5x06:
-    version: "*"
+    version: '*'
     public: true
 
   esp_lcd_sh8601:
-    version: "*"
+    version: '*'
     public: true
 
   lvgl/lvgl:
-    version: "^9"
+    version: ^9
     public: true
 
   led_strip:
-    version: "*"
+    version: '*'
     public: true
+  espressif/mpu6050: ^1.2.0
