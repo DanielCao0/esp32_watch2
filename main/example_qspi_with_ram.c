@@ -76,6 +76,7 @@ static const char *TAG = "example";
 #define EXAMPLE_PIN_NUM_LCD_DATA2 (GPIO_NUM_13)
 #define EXAMPLE_PIN_NUM_LCD_DATA3 (GPIO_NUM_12)
 #define EXAMPLE_PIN_NUM_LCD_RST (GPIO_NUM_45)
+#define EXAMPLE_PIN_NUM_LCD_TE (GPIO_NUM_8)
 #define EXAMPLE_PIN_NUM_BK_LIGHT (-1)
 
 // The pixel number in horizontal and vertical
@@ -112,7 +113,7 @@ static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
 
     {0x11, (uint8_t[]){0x00}, 0, 120},
     {0x44, (uint8_t[]){0x01, 0xD1}, 2, 0},
-    {0x35, (uint8_t[]){0x00}, 1, 0},
+    {0x35, (uint8_t[]){0x00}, 1, 0},      // TE信号使能，mode 0（V-blank only）
     {0x53, (uint8_t[]){0x20}, 1, 10},
     {0x2A, (uint8_t[]){0x00, 0x00, 0x01, 0x6F}, 4, 0},
     {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xBF}, 4, 0},
@@ -123,6 +124,24 @@ static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
 
 static lv_display_t *disp_drv;
 volatile bool disp_flush_enabled = true;
+
+// TE信号相关
+static SemaphoreHandle_t te_sem = NULL;
+
+// TE信号中断服务程序
+static void IRAM_ATTR te_gpio_isr_handler(void* arg)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    
+    // 释放信号量，通知刷新任务
+    if (te_sem != NULL) {
+        xSemaphoreGiveFromISR(te_sem, &xHigherPriorityTaskWoken);
+    }
+    
+    if (xHigherPriorityTaskWoken == pdTRUE) {
+        portYIELD_FROM_ISR();
+    }
+}
 
 static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
@@ -164,6 +183,17 @@ static void disp_flush(lv_display_t *disp_drv, const lv_area_t *area, uint8_t *p
     if (disp_flush_enabled)
     {
         esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp_drv);
+        
+        // // 等待TE信号，防止撕裂（超时时间设为16ms，约60fps）
+        // if (te_sem != NULL) {
+        //     if (xSemaphoreTake(te_sem, pdMS_TO_TICKS(16)) == pdTRUE) {
+        //         // TE信号收到，可以安全刷新
+        //     } else {
+        //         // 超时，直接刷新（避免卡死）
+        //         ESP_LOGW(TAG, "TE timeout, flush anyway");
+        //     }
+        // }
+        
         // 进行字节序转换（小端转大端）
         int pixel_count = (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1);
         uint16_t *buf = (uint16_t *)px_map;
@@ -303,6 +333,31 @@ void app_main(void)
     // 创建LED呼吸灯任务
     xTaskCreate(led_breathing_task, "led_breathing", 2048, led_strip, 5, NULL);
 
+    // 初始化TE信号
+    ESP_LOGI(TAG, "Initialize TE signal");
+    
+    // 创建TE信号量
+    te_sem = xSemaphoreCreateBinary();
+    if (te_sem == NULL) {
+        ESP_LOGE(TAG, "Failed to create TE semaphore");
+    }
+    
+    // 配置TE引脚为输入，启用上拉
+    gpio_config_t te_gpio_config = {
+        .pin_bit_mask = (1ULL << EXAMPLE_PIN_NUM_LCD_TE),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_POSEDGE,  // TE信号上升沿触发
+    };
+    ESP_ERROR_CHECK(gpio_config(&te_gpio_config));
+    
+    // 安装GPIO中断服务
+    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+    
+    // 添加TE引脚中断处理程序
+    ESP_ERROR_CHECK(gpio_isr_handler_add(EXAMPLE_PIN_NUM_LCD_TE, te_gpio_isr_handler, NULL));
+
     // static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
     // contains callback functions
     // Set GPIO11 high  这是屏幕的电源使能
@@ -436,11 +491,12 @@ void app_main(void)
     lv_indev_set_read_cb(indev, example_lvgl_touch_cb); /* Set driver function. */
     lv_indev_set_user_data(indev, tp);                  /* 绑定 tp 句柄到 user_data，供回调使用 */
 
-    list_menu_setup();
-
+    //list_menu_setup();
+    home_screen_custom_setup();
 
     while (1)
     {
-        lv_timer_handler_run_in_period(5); /* run lv_timer_handler() every 5ms */
+        // 使用较低的刷新频率，与TE信号同步，减少撕裂
+        lv_timer_handler_run_in_period(16); /* run lv_timer_handler() every 16ms (~60fps) */
     }
 }
