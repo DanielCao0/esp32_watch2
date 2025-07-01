@@ -51,6 +51,10 @@ static lv_timer_t * inertia_timer = NULL;
 static const float FRICTION = 0.85f;  // 摩擦系数（更小，摩擦更大，惯性更小）
 static const float MIN_VELOCITY = 3.0f;  // 最小速度阈值（更大，更快停止）
 
+// 独立界面管理变量
+static lv_obj_t *honeycomb_screen = NULL;
+static bool is_honeycomb_initialized = false;
+
 // 前向声明
 static void update_icons(void);
 static void inertia_timer_cb(lv_timer_t * timer);
@@ -378,19 +382,22 @@ static void scroll_event_cb(lv_event_t * e) {
     }
 }
 
-// 主设置函数
-void home_screen_custom_setup() {
-    lv_obj_t *main_cont = lv_screen_active();
+// 创建蜂窝菜单界面
+lv_obj_t* create_honeycomb_menu_screen(void) {
+    // 如果已经创建过，直接返回
+    if (honeycomb_screen != NULL) {
+        return honeycomb_screen;
+    }
     
-    // 清理之前的内容
-    lv_obj_clean(main_cont);
+    // 创建新的屏幕对象
+    honeycomb_screen = lv_obj_create(NULL);
     
     // 设置黑色背景
-    lv_obj_set_style_bg_color(main_cont, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(honeycomb_screen, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // 禁用LVGL原生滚动，使用自定义拖动
-    lv_obj_clear_flag(main_cont, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(main_cont, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(honeycomb_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(honeycomb_screen, LV_SCROLLBAR_MODE_OFF);
     
     // 计算蜂窝坐标
     calculate_honeycomb_positions();
@@ -418,7 +425,7 @@ void home_screen_custom_setup() {
     // 创建图标
     for (int i = 0; i < SCREEN_BODY_MAX; i++) {
         // 创建容器
-        icons[i].cont = lv_obj_create(main_cont);
+        icons[i].cont = lv_obj_create(honeycomb_screen);
         lv_obj_set_size(icons[i].cont, ICON_SIZE, ICON_SIZE);
         lv_obj_set_style_radius(icons[i].cont, LV_RADIUS_CIRCLE, LV_PART_MAIN);
         lv_obj_set_style_pad_all(icons[i].cont, 2, LV_PART_MAIN);
@@ -452,14 +459,89 @@ void home_screen_custom_setup() {
     }
     
     // 添加拖动事件到主容器
-    lv_obj_add_event_cb(main_cont, drag_event_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(main_cont, drag_event_cb, LV_EVENT_PRESSING, NULL);
-    lv_obj_add_event_cb(main_cont, drag_event_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(honeycomb_screen, drag_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(honeycomb_screen, drag_event_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(honeycomb_screen, drag_event_cb, LV_EVENT_RELEASED, NULL);
     
     // 初始化位置
     global_offset_x = 0;
     global_offset_y = 0;
+    is_honeycomb_initialized = true;
+    
+    printf("Apple Watch Honeycomb Menu screen created with %d icons\n", SCREEN_BODY_MAX);
+    
+    return honeycomb_screen;
+}
+
+// 显示蜂窝菜单界面
+void show_honeycomb_menu(void) {
+    if (honeycomb_screen == NULL) {
+        create_honeycomb_menu_screen();
+    }
+    
+    // 切换到蜂窝菜单界面
+    lv_screen_load(honeycomb_screen);
+    
+    // 刷新图标位置
+    if (is_honeycomb_initialized) {
+        update_icons();
+    }
+    
+    printf("Switched to Honeycomb Menu\n");
+}
+
+// 隐藏蜂窝菜单界面（切换到其他界面）
+void hide_honeycomb_menu(void) {
+    // 停止惯性动画
+    if (inertia_timer) {
+        lv_timer_del(inertia_timer);
+        inertia_timer = NULL;
+    }
+    
+    printf("Hiding Honeycomb Menu\n");
+}
+
+// 重置蜂窝菜单到中心位置
+void reset_honeycomb_menu(void) {
+    if (!is_honeycomb_initialized) return;
+    
+    // 停止惯性动画
+    if (inertia_timer) {
+        lv_timer_del(inertia_timer);
+        inertia_timer = NULL;
+    }
+    
+    // 重置偏移
+    global_offset_x = 0;
+    global_offset_y = 0;
+    velocity_x = 0;
+    velocity_y = 0;
+    
+    // 更新图标位置
     update_icons();
     
-    printf("Apple Watch Honeycomb Menu created with %d icons (with inertia)\n", SCREEN_BODY_MAX);
+    printf("Honeycomb Menu reset to center\n");
+}
+
+// 销毁蜂窝菜单界面（释放内存）
+void destroy_honeycomb_menu(void) {
+    if (honeycomb_screen != NULL) {
+        // 停止惯性动画
+        if (inertia_timer) {
+            lv_timer_del(inertia_timer);
+            inertia_timer = NULL;
+        }
+        
+        // 删除屏幕对象
+        lv_obj_del(honeycomb_screen);
+        honeycomb_screen = NULL;
+        is_honeycomb_initialized = false;
+        
+        printf("Honeycomb Menu destroyed\n");
+    }
+}
+
+// 主设置函数 - 修改为兼容性函数
+void home_screen_custom_setup() {
+    show_honeycomb_menu();
 }

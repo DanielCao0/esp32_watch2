@@ -34,7 +34,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+
+// 禁用旧版I2C驱动的弃用警告
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #include "driver/i2c.h"
+#pragma GCC diagnostic pop
+
 #include "driver/spi_master.h"
 #include "esp_timer.h"
 #include "esp_lcd_panel_io.h"
@@ -51,6 +57,10 @@
 
 #include "ui.h"
 #include "menu_screen.h"
+#include "wifi_connect.h"
+#include "clock.h"
+#include "lvgl_button.h"
+#include "mpu6050.h"
 
 static const char *TAG = "example";
 // static SemaphoreHandle_t lvgl_mux = NULL;
@@ -103,24 +113,24 @@ esp_lcd_touch_handle_t tp = NULL;
 
 #define BLINK_GPIO 15
 
-static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
-    // 1.78 inch AMOLED from DWO LIMITED
-    // Part number: DO0180FMST03-QSPI  / DO0180FMST06-QSPI  / DO0180FMST07-QSPI  / DO0180FMST07-QSPI  / DO0180FMST08-QSPI  / DO0180FMST09-QSPI  / DO0180FMST10-QSPI
-    // Size: 1.78 inch
-    // Resolution: 368x448
-    // Signal interface:  QSPI
-    // For more product information, please visit www.dwo.net.cn
+// static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
+//     // 1.78 inch AMOLED from DWO LIMITED
+//     // Part number: DO0180FMST03-QSPI  / DO0180FMST06-QSPI  / DO0180FMST07-QSPI  / DO0180FMST07-QSPI  / DO0180FMST08-QSPI  / DO0180FMST09-QSPI  / DO0180FMST10-QSPI
+//     // Size: 1.78 inch
+//     // Resolution: 368x448
+//     // Signal interface:  QSPI
+//     // For more product information, please visit www.dwo.net.cn
 
-    {0x11, (uint8_t[]){0x00}, 0, 120},
-    {0x44, (uint8_t[]){0x01, 0xD1}, 2, 0},
-    {0x35, (uint8_t[]){0x00}, 1, 0},      // TE信号使能，mode 0（V-blank only）
-    {0x53, (uint8_t[]){0x20}, 1, 10},
-    {0x2A, (uint8_t[]){0x00, 0x00, 0x01, 0x6F}, 4, 0},
-    {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xBF}, 4, 0},
-    {0x51, (uint8_t[]){0x00}, 1, 10},
-    {0x29, (uint8_t[]){0x00}, 0, 10},
-    {0x51, (uint8_t[]){0xFF}, 1, 0},
-};
+//     {0x11, (uint8_t[]){0x00}, 0, 120},
+//     {0x44, (uint8_t[]){0x01, 0xD1}, 2, 0},
+//     {0x35, (uint8_t[]){0x00}, 1, 0},      // TE信号使能，mode 0（V-blank only）
+//     {0x53, (uint8_t[]){0x20}, 1, 10},
+//     {0x2A, (uint8_t[]){0x00, 0x00, 0x01, 0x6F}, 4, 0},
+//     {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xBF}, 4, 0},
+//     {0x51, (uint8_t[]){0x00}, 1, 10},
+//     {0x29, (uint8_t[]){0x00}, 0, 10},
+//     {0x51, (uint8_t[]){0xFF}, 1, 0},
+// };
 
 static lv_display_t *disp_drv;
 volatile bool disp_flush_enabled = true;
@@ -306,7 +316,6 @@ static void led_breathing_task(void *pvParameters)
 
 void app_main(void)
 {
-    
     /// LED strip common configuration
     led_strip_config_t strip_config = {
         .strip_gpio_num = BLINK_GPIO,                                // The GPIO that connected to the LED strip's data line
@@ -334,165 +343,189 @@ void app_main(void)
     xTaskCreate(led_breathing_task, "led_breathing", 2048, led_strip, 5, NULL);
 
     // 初始化TE信号
-    ESP_LOGI(TAG, "Initialize TE signal");
+//     ESP_LOGI(TAG, "Initialize TE signal");
     
-    // 创建TE信号量
-    te_sem = xSemaphoreCreateBinary();
-    if (te_sem == NULL) {
-        ESP_LOGE(TAG, "Failed to create TE semaphore");
+//     // 创建TE信号量
+//     te_sem = xSemaphoreCreateBinary();
+//     if (te_sem == NULL) {
+//         ESP_LOGE(TAG, "Failed to create TE semaphore");
+//     }
+    
+//     // 配置TE引脚为输入，启用上拉
+//     gpio_config_t te_gpio_config = {
+//         .pin_bit_mask = (1ULL << EXAMPLE_PIN_NUM_LCD_TE),
+//         .mode = GPIO_MODE_INPUT,
+//         .pull_up_en = GPIO_PULLUP_ENABLE,
+//         .pull_down_en = GPIO_PULLDOWN_DISABLE,
+//         .intr_type = GPIO_INTR_POSEDGE,  // TE信号上升沿触发
+//     };
+//     ESP_ERROR_CHECK(gpio_config(&te_gpio_config));
+    
+//     // 安装GPIO中断服务
+//     ESP_ERROR_CHECK(gpio_install_isr_service(0));
+    
+//     // 添加TE引脚中断处理程序
+//     ESP_ERROR_CHECK(gpio_isr_handler_add(EXAMPLE_PIN_NUM_LCD_TE, te_gpio_isr_handler, NULL));
+
+//     // static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
+//     // contains callback functions
+//     // Set GPIO11 high  这是屏幕的电源使能
+//     gpio_config_t io_conf = {
+//         .pin_bit_mask = 1ULL << 11,
+//         .mode = GPIO_MODE_OUTPUT,
+//         .pull_up_en = GPIO_PULLUP_DISABLE,
+//         .pull_down_en = GPIO_PULLDOWN_DISABLE,
+//         .intr_type = GPIO_INTR_DISABLE};
+//     ESP_ERROR_CHECK(gpio_config(&io_conf));
+//     gpio_set_level(11, 1);
+
+// #if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
+//     ESP_LOGI(TAG, "Turn off LCD backlight");
+//     gpio_config_t bk_gpio_config = {
+//         .mode = GPIO_MODE_OUTPUT,
+//         .pin_bit_mask = 1ULL << EXAMPLE_PIN_NUM_BK_LIGHT};
+//     ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
+// #endif
+
+//     ESP_LOGI(TAG, "Initialize SPI bus");
+//     const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(EXAMPLE_PIN_NUM_LCD_PCLK,
+//                                                                  EXAMPLE_PIN_NUM_LCD_DATA0,
+//                                                                  EXAMPLE_PIN_NUM_LCD_DATA1,
+//                                                                  EXAMPLE_PIN_NUM_LCD_DATA2,
+//                                                                  EXAMPLE_PIN_NUM_LCD_DATA3,
+//                                                                  EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * LCD_BIT_PER_PIXEL / 8);
+//     ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO));
+
+//     ESP_LOGI(TAG, "Install panel IO");
+//     esp_lcd_panel_io_handle_t io_handle = NULL;
+//     const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(EXAMPLE_PIN_NUM_LCD_CS,
+//                                                                                 example_notify_lvgl_flush_ready,
+//                                                                                 &disp_drv); // disp_drv只是传了一个参数
+//     sh8601_vendor_config_t vendor_config = {
+//         .init_cmds = lcd_init_cmds,
+//         .init_cmds_size = sizeof(lcd_init_cmds) / sizeof(lcd_init_cmds[0]),
+//         .flags = {
+//             .use_qspi_interface = 1,
+//         },
+//     };
+//     // Attach the LCD to the SPI bus
+//     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle));
+
+//     esp_lcd_panel_handle_t panel_handle = NULL;
+//     const esp_lcd_panel_dev_config_t panel_config = {
+//         .reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST,
+//         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+//         .bits_per_pixel = LCD_BIT_PER_PIXEL,
+//         .vendor_config = &vendor_config,
+//     };
+//     ESP_LOGI(TAG, "Install SH8601 panel driver");
+//     ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(io_handle, &panel_config, &panel_handle));
+//     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+//     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
+//     // user can flush pre-defined pattern to the screen before we turn on the screen or backlight
+//     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+
+//     // 使用 esp_lcd_panel_init 相关接口画一个 10x10 的框
+//     // 这里只能直接操作底层显存，画一个 10x10 区域为白色
+//     // uint16_t color = 0x0000; // 16位黑色
+//     // uint16_t buf[10 * 10];
+//     // for(int i = 0; i < 100; i++) buf[i] = color;
+//     // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 100, 100, buf);
+
+// #if EXAMPLE_USE_TOUCH
+//     ESP_LOGI(TAG, "Initialize I2C bus");
+//     const i2c_config_t i2c_conf = {
+//         .mode = I2C_MODE_MASTER,
+//         .sda_io_num = EXAMPLE_PIN_NUM_TOUCH_SDA,
+//         .sda_pullup_en = GPIO_PULLUP_ENABLE,
+//         .scl_io_num = EXAMPLE_PIN_NUM_TOUCH_SCL,
+//         .scl_pullup_en = GPIO_PULLUP_ENABLE,
+//         .master.clk_speed = 100 * 1000,
+//     };
+//     ESP_ERROR_CHECK(i2c_param_config(TOUCH_HOST, &i2c_conf));
+//     ESP_ERROR_CHECK(i2c_driver_install(TOUCH_HOST, i2c_conf.mode, 0, 0, 0));
+
+//     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+//     const esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+//     // Attach the TOUCH to the I2C bus
+//     ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)TOUCH_HOST, &tp_io_config, &tp_io_handle));
+
+//     const esp_lcd_touch_config_t tp_cfg = {
+//         .x_max = EXAMPLE_LCD_H_RES,
+//         .y_max = EXAMPLE_LCD_V_RES,
+//         .rst_gpio_num = EXAMPLE_PIN_NUM_TOUCH_RST,
+//         .int_gpio_num = EXAMPLE_PIN_NUM_TOUCH_INT,
+//         .levels = {
+//             .reset = 0,
+//             .interrupt = 0,
+//         },
+//         .flags = {
+//             .swap_xy = 0,
+//             .mirror_x = 0,
+//             .mirror_y = 0,
+//         },
+//     };
+
+//     ESP_LOGI(TAG, "Initialize touch controller");
+//     ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &tp_cfg, &tp));
+// #endif
+
+// #if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
+//     ESP_LOGI(TAG, "Turn on LCD backlight");
+//     gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL);
+// #endif
+
+//     ESP_LOGI(TAG, "Initialize LVGL library");
+//     lv_init();
+//     lv_tick_set_cb(my_tick_get_cb);
+
+//     disp_drv = lv_display_create(EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
+//     // 绑定 panel_handle 到 LVGL display 的 user_data
+//     lv_display_set_user_data(disp_drv, panel_handle);
+//     lv_display_set_flush_cb(disp_drv, disp_flush);
+
+//     LV_ATTRIBUTE_MEM_ALIGN
+//     static uint8_t *buf_1_1 = NULL;
+//     LV_ATTRIBUTE_MEM_ALIGN
+//     static uint8_t *buf_1_2 = NULL;
+//     size_t buf_size = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES / 10 * (LCD_BIT_PER_PIXEL / 8);
+//     buf_1_1 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
+//     buf_1_2 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
+//     assert(buf_1_1);
+//     assert(buf_1_2);
+//     lv_display_set_buffers(disp_drv, buf_1_1, buf_1_2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+//     lv_indev_t *indev = lv_indev_create();              /* Create input device connected to Default Display. */
+//     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);    /* Touch pad is a pointer-like device. */
+//     lv_indev_set_read_cb(indev, example_lvgl_touch_cb); /* Set driver function. */
+//     lv_indev_set_user_data(indev, tp);                  /* 绑定 tp 句柄到 user_data，供回调使用 */
+
+//     //list_menu_setup();
+//     //home_screen_custom_setup();
+//     ui_init(); // 初始化UI
+
+    wifi_connect_init();   //我放在LVGL的前面 LVGL就会初始化失败，放在后面就可以
+
+    // 初始化时钟系统（15分钟定时同步）
+    clock_init();
+
+    // 初始化BOOT按钮
+    init_boot_btn();
+
+    // 初始化MPU6050
+    ESP_LOGI(TAG, "Initializing MPU6050...");
+    esp_err_t ret = mpu6050_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize MPU6050: %s", esp_err_to_name(ret));
+    } else {
+        // 启动数据读取任务
+        ret = mpu6050_start_reading_task();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start MPU6050 reading task: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "MPU6050 system started successfully");
+        }
     }
-    
-    // 配置TE引脚为输入，启用上拉
-    gpio_config_t te_gpio_config = {
-        .pin_bit_mask = (1ULL << EXAMPLE_PIN_NUM_LCD_TE),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_POSEDGE,  // TE信号上升沿触发
-    };
-    ESP_ERROR_CHECK(gpio_config(&te_gpio_config));
-    
-    // 安装GPIO中断服务
-    ESP_ERROR_CHECK(gpio_install_isr_service(0));
-    
-    // 添加TE引脚中断处理程序
-    ESP_ERROR_CHECK(gpio_isr_handler_add(EXAMPLE_PIN_NUM_LCD_TE, te_gpio_isr_handler, NULL));
-
-    // static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
-    // contains callback functions
-    // Set GPIO11 high  这是屏幕的电源使能
-    gpio_config_t io_conf = {
-        .pin_bit_mask = 1ULL << 11,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE};
-    ESP_ERROR_CHECK(gpio_config(&io_conf));
-    gpio_set_level(11, 1);
-
-#if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
-    ESP_LOGI(TAG, "Turn off LCD backlight");
-    gpio_config_t bk_gpio_config = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = 1ULL << EXAMPLE_PIN_NUM_BK_LIGHT};
-    ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
-#endif
-
-    ESP_LOGI(TAG, "Initialize SPI bus");
-    const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(EXAMPLE_PIN_NUM_LCD_PCLK,
-                                                                 EXAMPLE_PIN_NUM_LCD_DATA0,
-                                                                 EXAMPLE_PIN_NUM_LCD_DATA1,
-                                                                 EXAMPLE_PIN_NUM_LCD_DATA2,
-                                                                 EXAMPLE_PIN_NUM_LCD_DATA3,
-                                                                 EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * LCD_BIT_PER_PIXEL / 8);
-    ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO));
-
-    ESP_LOGI(TAG, "Install panel IO");
-    esp_lcd_panel_io_handle_t io_handle = NULL;
-    const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(EXAMPLE_PIN_NUM_LCD_CS,
-                                                                                example_notify_lvgl_flush_ready,
-                                                                                &disp_drv); // disp_drv只是传了一个参数
-    sh8601_vendor_config_t vendor_config = {
-        .init_cmds = lcd_init_cmds,
-        .init_cmds_size = sizeof(lcd_init_cmds) / sizeof(lcd_init_cmds[0]),
-        .flags = {
-            .use_qspi_interface = 1,
-        },
-    };
-    // Attach the LCD to the SPI bus
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle));
-
-    esp_lcd_panel_handle_t panel_handle = NULL;
-    const esp_lcd_panel_dev_config_t panel_config = {
-        .reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = LCD_BIT_PER_PIXEL,
-        .vendor_config = &vendor_config,
-    };
-    ESP_LOGI(TAG, "Install SH8601 panel driver");
-    ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(io_handle, &panel_config, &panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
-    // user can flush pre-defined pattern to the screen before we turn on the screen or backlight
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
-
-    // 使用 esp_lcd_panel_init 相关接口画一个 10x10 的框
-    // 这里只能直接操作底层显存，画一个 10x10 区域为白色
-    // uint16_t color = 0x0000; // 16位黑色
-    // uint16_t buf[10 * 10];
-    // for(int i = 0; i < 100; i++) buf[i] = color;
-    // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 100, 100, buf);
-
-#if EXAMPLE_USE_TOUCH
-    ESP_LOGI(TAG, "Initialize I2C bus");
-    const i2c_config_t i2c_conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = EXAMPLE_PIN_NUM_TOUCH_SDA,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_io_num = EXAMPLE_PIN_NUM_TOUCH_SCL,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100 * 1000,
-    };
-    ESP_ERROR_CHECK(i2c_param_config(TOUCH_HOST, &i2c_conf));
-    ESP_ERROR_CHECK(i2c_driver_install(TOUCH_HOST, i2c_conf.mode, 0, 0, 0));
-
-    esp_lcd_panel_io_handle_t tp_io_handle = NULL;
-    const esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
-    // Attach the TOUCH to the I2C bus
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)TOUCH_HOST, &tp_io_config, &tp_io_handle));
-
-    const esp_lcd_touch_config_t tp_cfg = {
-        .x_max = EXAMPLE_LCD_H_RES,
-        .y_max = EXAMPLE_LCD_V_RES,
-        .rst_gpio_num = EXAMPLE_PIN_NUM_TOUCH_RST,
-        .int_gpio_num = EXAMPLE_PIN_NUM_TOUCH_INT,
-        .levels = {
-            .reset = 0,
-            .interrupt = 0,
-        },
-        .flags = {
-            .swap_xy = 0,
-            .mirror_x = 0,
-            .mirror_y = 0,
-        },
-    };
-
-    ESP_LOGI(TAG, "Initialize touch controller");
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &tp_cfg, &tp));
-#endif
-
-#if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
-    ESP_LOGI(TAG, "Turn on LCD backlight");
-    gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL);
-#endif
-
-    ESP_LOGI(TAG, "Initialize LVGL library");
-    lv_init();
-    lv_tick_set_cb(my_tick_get_cb);
-
-    disp_drv = lv_display_create(EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
-    // 绑定 panel_handle 到 LVGL display 的 user_data
-    lv_display_set_user_data(disp_drv, panel_handle);
-    lv_display_set_flush_cb(disp_drv, disp_flush);
-
-    LV_ATTRIBUTE_MEM_ALIGN
-    static uint8_t *buf_1_1 = NULL;
-    LV_ATTRIBUTE_MEM_ALIGN
-    static uint8_t *buf_1_2 = NULL;
-    size_t buf_size = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES / 6 * (LCD_BIT_PER_PIXEL / 8);
-    buf_1_1 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
-    buf_1_2 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
-    assert(buf_1_1);
-    assert(buf_1_2);
-    lv_display_set_buffers(disp_drv, buf_1_1, buf_1_2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
-
-    lv_indev_t *indev = lv_indev_create();              /* Create input device connected to Default Display. */
-    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);    /* Touch pad is a pointer-like device. */
-    lv_indev_set_read_cb(indev, example_lvgl_touch_cb); /* Set driver function. */
-    lv_indev_set_user_data(indev, tp);                  /* 绑定 tp 句柄到 user_data，供回调使用 */
-
-    //list_menu_setup();
-    home_screen_custom_setup();
 
     while (1)
     {

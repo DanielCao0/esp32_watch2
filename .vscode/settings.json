@@ -3,7 +3,8 @@
   "idf.portWin": "COM6",
   "files.associations": {
     "esp_lcd_touch.h": "c",
-    "esp_lcd_sh8601.h": "c"
+    "esp_lcd_sh8601.h": "c",
+    "mpu6050.h": "c"
   },
   "idf.flashType": "UART",
   "idf.customExtraVars": {
