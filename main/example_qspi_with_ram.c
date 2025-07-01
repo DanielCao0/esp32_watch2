@@ -512,19 +512,19 @@ void app_main(void)
     // 初始化BOOT按钮
     init_boot_btn();
 
-    // 初始化MPU6050
-    ESP_LOGI(TAG, "Initializing MPU6050...");
-    esp_err_t ret = mpu6050_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize MPU6050: %s", esp_err_to_name(ret));
-    } else {
-        // 启动数据读取任务
-        ret = mpu6050_start_reading_task();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to start MPU6050 reading task: %s", esp_err_to_name(ret));
+    // 初始化MPU6050传感器（1秒读取一次）
+    ESP_LOGI(TAG, "Initializing MPU6050 sensor...");
+    esp_err_t mpu_ret = mpu6050_init();
+    if (mpu_ret == ESP_OK) {
+        // 启动1秒定时读取任务
+        mpu_ret = mpu6050_start_reading_task_with_interval(1000);  // 1000ms = 1秒
+        if (mpu_ret == ESP_OK) {
+            ESP_LOGI(TAG, "MPU6050 sensor initialized and task started (1 second interval)");
         } else {
-            ESP_LOGI(TAG, "MPU6050 system started successfully");
+            ESP_LOGE(TAG, "Failed to start MPU6050 reading task: %s", esp_err_to_name(mpu_ret));
         }
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize MPU6050 sensor: %s", esp_err_to_name(mpu_ret));
     }
 
     while (1)
