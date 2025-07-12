@@ -5,6 +5,18 @@
 #include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
+
+// 时钟事件类型
+typedef enum {
+    CLOCK_EVENT_UPDATE_UI,      // 更新UI显示
+    CLOCK_EVENT_SYNC_TIME       // 同步时间
+} clock_event_type_t;
+
+// 时钟事件结构
+typedef struct {
+    clock_event_type_t type;
+} clock_event_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,6 +78,24 @@ void format_time_string(const struct tm *timeinfo, char *time_str, size_t max_le
  * @return true - 成功获取，false - 失败
  */
 bool get_formatted_time(char *time_str, size_t max_len, const char *format);
+
+/**
+ * @brief 手动更新LVGL时间显示
+ * 立即更新ui_hour和ui_minutes对象的文本内容
+ */
+void update_lvgl_time_display_manual(void);
+
+/**
+ * @brief 获取时钟事件队列
+ * @return 时钟事件队列句柄，如果未初始化则返回NULL
+ */
+QueueHandle_t get_clock_event_queue(void);
+
+/**
+ * @brief 处理时钟事件（在主任务中调用）
+ * @param event 时钟事件
+ */
+void handle_clock_event(const clock_event_t *event);
 
 #ifdef __cplusplus
 }

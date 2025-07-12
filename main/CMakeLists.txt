@@ -1,7 +1,7 @@
 file(GLOB_RECURSE SRC_UI ui/*.c)
 
 idf_component_register(
-    SRCS "mpu6050.c" "example_qspi_with_ram.c" "wifi_connect.c" "clock.c" "lvgl_button.c" "wifi_stability_test.c" "button_test.c"
+    SRCS "rtc.c" "mpu6050.c" "example_qspi_with_ram.c" "wifi_connect.c" "clock.c" "lvgl_button.c"
         ${SRC_UI}
         "menu_screen.c"
     INCLUDE_DIRS "." "ui"

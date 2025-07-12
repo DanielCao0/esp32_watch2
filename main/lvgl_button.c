@@ -3,6 +3,7 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -16,18 +17,13 @@ static const char *TAG = "BOOT_BTN";
 #define BTN_LONG_PRESS_TIME_MS  1000    // 长按时间（毫秒）
 #define BTN_POLL_INTERVAL_MS    20      // 检测间隔（毫秒）
 #define DOUBLE_CLICK_TIME_MS    500     // 双击检测时间窗口（毫秒）
-#define BTN_TASK_STACK_SIZE     2048    // 按钮任务栈大小
+#define BTN_TASK_STACK_SIZE     2048   // 按钮任务栈大小
 #define BTN_TASK_PRIORITY       5       // 按钮任务优先级
 
 // 按钮状态变量
 static volatile button_state_t btn_state = BTN_STATE_IDLE;
 static volatile uint32_t btn_press_start_time = 0;
 static volatile bool btn_long_press_handled = false;
-
-// 按钮事件回调
-static volatile button_event_cb_t short_press_cb = NULL;
-static volatile button_event_cb_t long_press_cb = NULL;
-static volatile button_event_cb_t double_click_cb = NULL;
 
 // 双击检测相关
 static volatile uint32_t last_click_time = 0;
@@ -36,10 +32,34 @@ static volatile bool waiting_for_double_click = false;
 // 任务句柄（用于调试和管理）
 static TaskHandle_t btn_task_handle = NULL;
 
+// 按钮事件队列
+static QueueHandle_t button_event_queue = NULL;
+#define BUTTON_EVENT_QUEUE_SIZE 10
+
 // 获取系统时间（毫秒）
 static inline uint32_t get_time_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+// 发送按钮事件到队列
+static void send_button_event(button_event_type_t event_type)
+{
+    if (button_event_queue == NULL) {
+        ESP_LOGW(TAG, "Button event queue not initialized");
+        return;
+    }
+    
+    button_event_t event = {
+        .type = event_type,
+        .timestamp = get_time_ms()
+    };
+    
+    if (xQueueSend(button_event_queue, &event, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to send button event %d to queue", event_type);
+    } else {
+        ESP_LOGD(TAG, "Button event %d sent to queue", event_type);
+    }
 }
 
 // 短按事件处理
@@ -53,11 +73,7 @@ static void handle_short_press(void)
         // 双击检测成功
         waiting_for_double_click = false;
         ESP_LOGI(TAG, "Double click confirmed (interval: %lu ms)", current_time - last_click_time);
-        if (double_click_cb != NULL) {
-            double_click_cb();
-        } else {
-            ESP_LOGW(TAG, "Double click callback not registered");
-        }
+        send_button_event(BUTTON_EVENT_DOUBLE_CLICK);
     } else {
         // 开始等待双击或执行单击
         waiting_for_double_click = true;
@@ -70,11 +86,7 @@ static void handle_short_press(void)
 static void handle_long_press(void)
 {
     ESP_LOGI(TAG, "Long press confirmed (held for %lu ms)", get_time_ms() - btn_press_start_time);
-    if (long_press_cb != NULL) {
-        long_press_cb();
-    } else {
-        ESP_LOGW(TAG, "Long press callback not registered");
-    }
+    send_button_event(BUTTON_EVENT_LONG_PRESS);
 }
 
 // 处理等待中的单击事件
@@ -85,11 +97,7 @@ static void handle_pending_single_click(void)
         if ((current_time - last_click_time) >= DOUBLE_CLICK_TIME_MS) {
             waiting_for_double_click = false;
             ESP_LOGI(TAG, "Single click confirmed (no double click detected)");
-            if (short_press_cb != NULL) {
-                short_press_cb();
-            } else {
-                ESP_LOGW(TAG, "Short press callback not registered");
-            }
+            send_button_event(BUTTON_EVENT_SHORT_PRESS);
         }
     }
 }
@@ -176,67 +184,17 @@ static void boot_btn_task(void *pvParameter)
     }
 }
 
-// 注册按钮事件回调函数
-void button_register_short_press_cb(button_event_cb_t callback)
-{
-    if (callback != NULL) {
-        short_press_cb = callback;
-        ESP_LOGI(TAG, "Short press callback registered successfully");
-    } else {
-        ESP_LOGW(TAG, "Attempted to register NULL short press callback");
-    }
-}
-
-void button_register_long_press_cb(button_event_cb_t callback)
-{
-    if (callback != NULL) {
-        long_press_cb = callback;
-        ESP_LOGI(TAG, "Long press callback registered successfully");
-    } else {
-        ESP_LOGW(TAG, "Attempted to register NULL long press callback");
-    }
-}
-
-void button_register_double_click_cb(button_event_cb_t callback)
-{
-    if (callback != NULL) {
-        double_click_cb = callback;
-        ESP_LOGI(TAG, "Double click callback registered successfully");
-    } else {
-        ESP_LOGW(TAG, "Attempted to register NULL double click callback");
-    }
-}
-
-// 默认事件处理函数
-static void default_short_press_handler(void)
-{
-    ESP_LOGI(TAG, "Default action: Showing honeycomb menu");
-    // 确保菜单函数存在再调用
-    show_honeycomb_menu();
-}
-
-static void default_long_press_handler(void)
-{
-    ESP_LOGI(TAG, "Default action: Resetting honeycomb menu to center");
-    // 确保重置函数存在再调用
-    reset_honeycomb_menu();
-}
-
-static void default_double_click_handler(void)
-{
-    ESP_LOGI(TAG, "Default action: Switch to main screen (placeholder)");
-    // 这里可以添加切换回主界面的逻辑
-    // 例如：
-    // if (main_screen != NULL) {
-    //     lv_scr_load(main_screen);
-    // } else {
-    //     ESP_LOGW(TAG, "Main screen not available");
-    // }
-}
-
 void init_boot_btn(void)
 {
     ESP_LOGI(TAG, "Initializing BOOT button (GPIO%d)...", BOOT_BTN_GPIO);
+    
+    // 创建按钮事件队列
+    button_event_queue = xQueueCreate(BUTTON_EVENT_QUEUE_SIZE, sizeof(button_event_t));
+    if (button_event_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create button event queue");
+        return;
+    }
+    ESP_LOGI(TAG, "Button event queue created successfully");
     
     // 配置GPIO
     gpio_config_t io_conf = {
@@ -257,12 +215,6 @@ void init_boot_btn(void)
     // 验证GPIO初始状态
     int initial_level = gpio_get_level(BOOT_BTN_GPIO);
     ESP_LOGI(TAG, "Initial button state: %s", initial_level ? "RELEASED" : "PRESSED");
-    
-    // 设置默认回调函数
-    short_press_cb = default_short_press_handler;
-    long_press_cb = default_long_press_handler;
-    double_click_cb = default_double_click_handler;
-    ESP_LOGI(TAG, "Default button callbacks configured");
     
     // 创建按钮检测任务
     BaseType_t task_ret = xTaskCreate(
@@ -286,9 +238,9 @@ void init_boot_btn(void)
     ESP_LOGI(TAG, "  - Double click window: %d ms", DOUBLE_CLICK_TIME_MS);
     ESP_LOGI(TAG, "  - Poll interval: %d ms", BTN_POLL_INTERVAL_MS);
     ESP_LOGI(TAG, "Button functions:");
-    ESP_LOGI(TAG, "  - Short press: Show honeycomb menu");
-    ESP_LOGI(TAG, "  - Long press: Reset menu position");
-    ESP_LOGI(TAG, "  - Double click: Return to main screen");
+    ESP_LOGI(TAG, "  - Short press: Trigger callback (no default action)");
+    ESP_LOGI(TAG, "  - Long press: Reset honeycomb menu position");
+    ESP_LOGI(TAG, "  - Double click: Show honeycomb menu");
     ESP_LOGI(TAG, "Boot button initialization completed successfully");
 }
 
@@ -346,4 +298,44 @@ bool is_button_task_running(void)
     
     eTaskState task_state = eTaskGetState(btn_task_handle);
     return (task_state != eDeleted && task_state != eInvalid);
+}
+
+// 获取按钮事件队列句柄
+QueueHandle_t get_button_event_queue(void)
+{
+    return button_event_queue;
+}
+
+// 处理按钮事件（在主任务中调用）
+void handle_button_event(const button_event_t *event)
+{
+    if (event == NULL) {
+        ESP_LOGW(TAG, "Button event pointer is NULL");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Processing button event type: %d at time: %lu", event->type, event->timestamp);
+    
+    switch (event->type) {
+        case BUTTON_EVENT_SHORT_PRESS:
+            ESP_LOGI(TAG, "returning");
+            
+            break;
+            
+        case BUTTON_EVENT_LONG_PRESS:
+            ESP_LOGI(TAG, "Handling long press event - resetting honeycomb menu");
+            // 长按：重置蜂窝菜单位置
+            reset_honeycomb_menu();
+            break;
+            
+        case BUTTON_EVENT_DOUBLE_CLICK:
+            ESP_LOGI(TAG, "Handling double click event - showing honeycomb menu");
+            // 双击：显示蜂窝菜单
+            show_honeycomb_menu();
+            break;
+            
+        default:
+            ESP_LOGW(TAG, "Unknown button event type: %d", event->type);
+            break;
+    }
 }

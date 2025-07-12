@@ -2,17 +2,19 @@
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
+#include "freertos/queue.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
 #include <string.h>
+#include "clock.h"  // 包含时钟相关函数
 
 #define WIFI_SSID      "RAK"
 #define WIFI_PASS      "rak20140629"
 
-#define HOME_SSID      "HONOR-0F19KY_2.4G"
+#define HOME_SSID      "HONOR-0F19KY_2G4"
 #define HOME_PASS      "syqcy1314!"
 
 #define MAX_WIFI_CONFIGS 2  // 支持的WiFi配置数量
@@ -32,6 +34,19 @@ static wifi_config_entry_t wifi_configs[MAX_WIFI_CONFIGS] = {
 static int current_wifi_index = 0;  // 当前尝试的WiFi配置索引
 static int attempts_in_cycle = 0;   // 当前周期内的尝试次数
 
+// WiFi管理事件类型
+typedef enum {
+    WIFI_MGMT_EVENT_TIMEOUT,      // 连接超时
+    WIFI_MGMT_EVENT_RETRY,        // 重试连接
+    WIFI_MGMT_EVENT_TRY_NEXT,     // 尝试下一个配置
+    WIFI_MGMT_EVENT_DISCONNECT,   // 断开连接
+} wifi_mgmt_event_type_t;
+
+// WiFi管理事件结构
+typedef struct {
+    wifi_mgmt_event_type_t type;
+} wifi_mgmt_event_t;
+
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_TIMEOUT_MS (30 * 1000)    // 30秒连接超时
 #define WIFI_RETRY_INTERVAL_MS (15 * 60 * 1000)  // 15分钟重试间隔
@@ -39,6 +54,8 @@ static int attempts_in_cycle = 0;   // 当前周期内的尝试次数
 static EventGroupHandle_t wifi_event_group;
 static TimerHandle_t wifi_retry_timer = NULL;
 static TimerHandle_t wifi_timeout_timer = NULL;
+static QueueHandle_t wifi_mgmt_queue = NULL;
+static TaskHandle_t wifi_mgmt_task_handle = NULL;
 static const char *TAG = "wifi_connect";
 static bool is_connecting = false;
 
@@ -47,41 +64,113 @@ static void wifi_start_connection(void);
 static void try_next_wifi_config(void);
 static void wifi_timeout_callback(TimerHandle_t timer);
 static void wifi_retry_callback(TimerHandle_t timer);
+static void wifi_mgmt_task(void *pvParameters);
+static void send_wifi_mgmt_event(wifi_mgmt_event_type_t event_type);
 
-// WiFi连接超时回调
-static void wifi_timeout_callback(TimerHandle_t timer)
+// 发送WiFi管理事件到任务队列
+static void send_wifi_mgmt_event(wifi_mgmt_event_type_t event_type)
 {
-    if (is_connecting) {
-        ESP_LOGW(TAG, "WiFi connection timeout for SSID: %s", wifi_configs[current_wifi_index].ssid);
-        esp_wifi_disconnect();
-        is_connecting = false;
+    if (wifi_mgmt_queue != NULL) {
+        wifi_mgmt_event_t event = { .type = event_type };
         
-        attempts_in_cycle++;
-        
-        // 检查是否已经尝试了所有WiFi配置
-        if (attempts_in_cycle >= MAX_WIFI_CONFIGS) {
-            ESP_LOGI(TAG, "All WiFi configurations tried, waiting 15 minutes before next cycle");
-            attempts_in_cycle = 0;
-            current_wifi_index = 0;  // 重置到第一个配置
+        // 检查是否在中断上下文中
+        if (xPortInIsrContext()) {
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
             
-            // 启动15分钟重试定时器
-            if (wifi_retry_timer != NULL) {
-                xTimerStart(wifi_retry_timer, 0);
+            // 从中断中发送事件
+            if (xQueueSendFromISR(wifi_mgmt_queue, &event, &xHigherPriorityTaskWoken) != pdTRUE) {
+                // 队列满了，可以记录错误但不能使用ESP_LOGE（在ISR中不安全）
+            }
+            
+            if (xHigherPriorityTaskWoken == pdTRUE) {
+                portYIELD_FROM_ISR();
             }
         } else {
-            // 尝试下一个WiFi配置
-            try_next_wifi_config();
+            // 从普通任务中发送事件
+            if (xQueueSend(wifi_mgmt_queue, &event, pdMS_TO_TICKS(100)) != pdTRUE) {
+                ESP_LOGW(TAG, "Failed to send WiFi management event %d to queue", event_type);
+            }
         }
     }
 }
 
-// WiFi重试定时器回调
+// WiFi连接超时回调（简化版，只发送事件）
+static void wifi_timeout_callback(TimerHandle_t timer)
+{
+    send_wifi_mgmt_event(WIFI_MGMT_EVENT_TIMEOUT);
+}
+
+// WiFi重试定时器回调（简化版，只发送事件）
 static void wifi_retry_callback(TimerHandle_t timer)
 {
-    ESP_LOGI(TAG, "Starting new WiFi connection cycle, trying all %d configurations", MAX_WIFI_CONFIGS);
-    attempts_in_cycle = 0;
-    current_wifi_index = 0;  // 从第一个配置开始
-    wifi_start_connection();
+    send_wifi_mgmt_event(WIFI_MGMT_EVENT_RETRY);
+}
+
+// WiFi管理任务 - 处理所有复杂的WiFi操作
+static void wifi_mgmt_task(void *pvParameters)
+{
+    wifi_mgmt_event_t event;
+    
+    while (1) {
+        // 等待事件
+        if (xQueueReceive(wifi_mgmt_queue, &event, portMAX_DELAY) == pdTRUE) {
+            switch (event.type) {
+                case WIFI_MGMT_EVENT_TIMEOUT:
+                    if (is_connecting) {
+                        ESP_LOGW(TAG, "WiFi connection timeout for SSID: %s", wifi_configs[current_wifi_index].ssid);
+                        esp_wifi_disconnect();
+                        is_connecting = false;
+                        
+                        attempts_in_cycle++;
+                        
+                        // 检查是否已经尝试了所有WiFi配置
+                        if (attempts_in_cycle >= MAX_WIFI_CONFIGS) {
+                            ESP_LOGI(TAG, "All WiFi configurations tried, waiting 15 minutes before next cycle");
+                            attempts_in_cycle = 0;
+                            current_wifi_index = 0;  // 重置到第一个配置
+                            
+                            // 启动15分钟重试定时器
+                            if (wifi_retry_timer != NULL) {
+                                xTimerStart(wifi_retry_timer, 0);
+                            }
+                        } else {
+                            // 发送尝试下一个配置的事件
+                            send_wifi_mgmt_event(WIFI_MGMT_EVENT_TRY_NEXT);
+                        }
+                    }
+                    break;
+                    
+                case WIFI_MGMT_EVENT_RETRY:
+                    ESP_LOGI(TAG, "Starting new WiFi connection cycle, trying all %d configurations", MAX_WIFI_CONFIGS);
+                    attempts_in_cycle = 0;
+                    current_wifi_index = 0;  // 从第一个配置开始
+                    wifi_start_connection();
+                    break;
+                    
+                case WIFI_MGMT_EVENT_TRY_NEXT:
+                    try_next_wifi_config();
+                    break;
+                    
+                case WIFI_MGMT_EVENT_DISCONNECT:
+                    ESP_LOGI(TAG, "WiFi disconnected, will retry in 15 minutes");
+                    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+                    
+                    // 重置计数器，从第一个配置开始新的周期
+                    attempts_in_cycle = 0;
+                    current_wifi_index = 0;
+                    
+                    // 启动重试定时器
+                    if (wifi_retry_timer != NULL) {
+                        xTimerStart(wifi_retry_timer, 0);
+                    }
+                    break;
+                    
+                default:
+                    ESP_LOGW(TAG, "Unknown WiFi management event: %d", event.type);
+                    break;
+            }
+        }
+    }
 }
 
 // 启动WiFi连接尝试
@@ -159,21 +248,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                     xTimerStart(wifi_retry_timer, 0);
                 }
             } else {
-                // 尝试下一个WiFi配置
-                try_next_wifi_config();
+                // 发送尝试下一个配置的事件
+                send_wifi_mgmt_event(WIFI_MGMT_EVENT_TRY_NEXT);
             }
         } else {
-            ESP_LOGI(TAG, "WiFi disconnected, will retry in 15 minutes");
-            xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
-            
-            // 重置计数器，从第一个配置开始新的周期
-            attempts_in_cycle = 0;
-            current_wifi_index = 0;
-            
-            // 启动重试定时器
-            if (wifi_retry_timer != NULL) {
-                xTimerStart(wifi_retry_timer, 0);
-            }
+            // 发送断开连接事件
+            send_wifi_mgmt_event(WIFI_MGMT_EVENT_DISCONNECT);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
@@ -192,6 +272,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         if (wifi_retry_timer != NULL) {
             xTimerStop(wifi_retry_timer, 0);
         }
+
+        app_get_beijing_time();
     }
 }
 
@@ -201,6 +283,27 @@ void wifi_connect_init(void)
     // NVS (Non-Volatile Storage) 用于存储WiFi配置等持久化数据
     esp_err_t ret = nvs_flash_init();
     ESP_ERROR_CHECK(ret);
+
+    // ========================= 队列和任务创建 =========================
+    // 创建WiFi管理事件队列
+    wifi_mgmt_queue = xQueueCreate(10, sizeof(wifi_mgmt_event_t));
+    if (wifi_mgmt_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create WiFi management queue");
+        return;
+    }
+    
+    // 创建WiFi管理任务（增加栈大小避免栈溢出）
+    BaseType_t task_created = xTaskCreate(wifi_mgmt_task, 
+                                         "wifi_mgmt", 
+                                         4096,  // 增加栈大小到4KB
+                                         NULL, 
+                                         5,     // 优先级5
+                                         &wifi_mgmt_task_handle);
+    
+    if (task_created != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create WiFi management task");
+        return;
+    }
 
     // ========================= 事件组创建 =========================
     // 创建事件组，用于在不同任务间同步WiFi连接状态
@@ -300,7 +403,7 @@ void wifi_reconnect(void)
     if (!is_connecting) {
         attempts_in_cycle = 0;  // 重置计数器
         current_wifi_index = 0; // 从第一个配置开始
-        wifi_start_connection();
+        send_wifi_mgmt_event(WIFI_MGMT_EVENT_RETRY);
     } else {
         ESP_LOGW(TAG, "WiFi connection already in progress");
     }

@@ -5,10 +5,24 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// 按钮事件类型枚举
+typedef enum {
+    BUTTON_EVENT_SHORT_PRESS,
+    BUTTON_EVENT_LONG_PRESS,
+    BUTTON_EVENT_DOUBLE_CLICK
+} button_event_type_t;
+
+// 按钮事件结构体
+typedef struct {
+    button_event_type_t type;
+    uint32_t timestamp;
+} button_event_t;
 
 // 按钮状态枚举
 typedef enum {
@@ -35,24 +49,6 @@ typedef struct {
  * 设置默认的按钮事件处理函数
  */
 void init_boot_btn(void);
-
-/**
- * @brief 注册短按事件回调函数
- * @param callback 短按事件回调函数
- */
-void button_register_short_press_cb(button_event_cb_t callback);
-
-/**
- * @brief 注册长按事件回调函数
- * @param callback 长按事件回调函数
- */
-void button_register_long_press_cb(button_event_cb_t callback);
-
-/**
- * @brief 注册双击事件回调函数
- * @param callback 双击事件回调函数
- */
-void button_register_double_click_cb(button_event_cb_t callback);
 
 /**
  * @brief 获取按钮当前状态
@@ -82,6 +78,18 @@ void reset_button_state(void);
  * @return true 如果任务正在运行，false 否则
  */
 bool is_button_task_running(void);
+
+/**
+ * @brief 获取按钮事件队列句柄
+ * @return 事件队列句柄，如果未初始化则返回NULL
+ */
+QueueHandle_t get_button_event_queue(void);
+
+/**
+ * @brief 处理按钮事件（在主任务中调用）
+ * @param event 按钮事件
+ */
+void handle_button_event(const button_event_t *event);
 
 #ifdef __cplusplus
 }
