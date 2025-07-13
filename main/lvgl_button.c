@@ -6,6 +6,7 @@
 #include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "ui.h"
 
 static const char *TAG = "BOOT_BTN";
 
@@ -319,7 +320,7 @@ void handle_button_event(const button_event_t *event)
     switch (event->type) {
         case BUTTON_EVENT_SHORT_PRESS:
             ESP_LOGI(TAG, "returning");
-            
+            lv_screen_load(ui_Screen1);
             break;
             
         case BUTTON_EVENT_LONG_PRESS:

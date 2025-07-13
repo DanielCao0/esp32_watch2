@@ -63,7 +63,10 @@
 #include "lvgl_button.h"
 #include "mpu6050.h"
 #include "rtc.h"
+#include "hardware_rtc.h"
 #include "lvgl_lock.h"
+#include "sdcard.h"
+#include "screen_power.h"
 
 static const char *TAG = "example";
 static SemaphoreHandle_t lvgl_mux = NULL;
@@ -206,6 +209,9 @@ static void example_lvgl_touch_cb(lv_indev_t *indev, lv_indev_data_t *data)
         data->point.y = tp_y;
         data->state = LV_INDEV_STATE_PRESSED;
         ESP_LOGD(TAG, "Touch position: %d,%d", tp_x, tp_y);
+        
+        // 通知屏幕电源管理模块有触摸活动
+        screen_power_touch_activity();
     }
     else
     {
@@ -340,6 +346,67 @@ static void led_breathing_task(void *pvParameters)
     }
 }
 
+// 硬件RTC测试和演示函数
+static esp_err_t local_hardware_rtc_demo(void)
+{
+    ESP_LOGI(TAG, "=== Hardware RTC Demo ===");
+    
+    // 设置一个示例时间（如果时间未设置）
+    hardware_rtc_info_t rtc_info;
+    if (hardware_rtc_get_info(&rtc_info) == ESP_OK && !rtc_info.is_time_set) {
+        ESP_LOGI(TAG, "Setting demo time...");
+        
+        hardware_rtc_time_t demo_time = {
+            .year = 2025,
+            .month = 7,
+            .day = 13,
+            .hour = 14,
+            .minute = 30,
+            .second = 0,
+            .weekday = hardware_rtc_calculate_weekday(2025, 7, 13)
+        };
+        
+        if (hardware_rtc_set_time(&demo_time) == ESP_OK) {
+            ESP_LOGI(TAG, "Demo time set successfully");
+        } else {
+            ESP_LOGE(TAG, "Failed to set demo time");
+            return ESP_FAIL;
+        }
+    }
+    
+    // 显示当前时间的多种格式
+    hardware_rtc_time_t current_time;
+    if (hardware_rtc_get_time(&current_time) == ESP_OK) {
+        char time_str[128];
+        
+        hardware_rtc_format_time(&current_time, time_str, sizeof(time_str), "datetime");
+        ESP_LOGI(TAG, "DateTime: %s", time_str);
+        
+        hardware_rtc_format_time(&current_time, time_str, sizeof(time_str), "time");
+        ESP_LOGI(TAG, "Time: %s", time_str);
+        
+        hardware_rtc_format_time(&current_time, time_str, sizeof(time_str), "date");
+        ESP_LOGI(TAG, "Date: %s", time_str);
+        
+        hardware_rtc_format_time(&current_time, time_str, sizeof(time_str), "chinese");
+        ESP_LOGI(TAG, "Chinese: %s", time_str);
+        
+        hardware_rtc_format_time(&current_time, time_str, sizeof(time_str), "iso8601");
+        ESP_LOGI(TAG, "ISO8601: %s", time_str);
+        
+        ESP_LOGI(TAG, "Weekday EN: %s", hardware_rtc_get_weekday_name_en(current_time.weekday));
+        ESP_LOGI(TAG, "Weekday CN: %s", hardware_rtc_get_weekday_name_cn(current_time.weekday));
+    } else {
+        ESP_LOGE(TAG, "Failed to get current time");
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "System uptime: %llu seconds", hardware_rtc_get_uptime_seconds());
+    ESP_LOGI(TAG, "Unix timestamp: %ld", hardware_rtc_get_timestamp());
+    
+    return ESP_OK;
+}
+
 void app_main(void)
 {
     // 初始化LVGL互斥信号量
@@ -374,7 +441,7 @@ void app_main(void)
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
 
     // 创建LED呼吸灯任务
-    xTaskCreate(led_breathing_task, "led_breathing", 2048, led_strip, 5, NULL);
+    // xTaskCreate(led_breathing_task, "led_breathing", 2048, led_strip, 5, NULL);
 
     // 初始化TE信号
     ESP_LOGI(TAG, "Initialize TE signal");
@@ -518,6 +585,17 @@ void app_main(void)
     lv_display_set_user_data(disp_drv, panel_handle);
     lv_display_set_flush_cb(disp_drv, disp_flush);
 
+    // 初始化屏幕电源管理
+    ESP_LOGI(TAG, "Initializing screen power management");
+    esp_err_t screen_power_ret = screen_power_init();
+    if (screen_power_ret == ESP_OK) {
+        // 设置LCD面板句柄到屏幕电源管理模块
+        screen_power_set_panel_handle(panel_handle);
+        ESP_LOGI(TAG, "Screen power management initialized successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize screen power management: %s", esp_err_to_name(screen_power_ret));
+    }
+
     LV_ATTRIBUTE_MEM_ALIGN
     static uint8_t *buf_1_1 = NULL;
     LV_ATTRIBUTE_MEM_ALIGN
@@ -540,12 +618,93 @@ void app_main(void)
 
     wifi_connect_init();   //我放在LVGL的前面 LVGL就会初始化失败，放在后面就可以
 
+    // 初始化硬件RTC
+    ESP_LOGI(TAG, "Initializing hardware RTC...");
+    esp_err_t rtc_ret = hardware_rtc_init();
+    if (rtc_ret == ESP_OK) {
+        ESP_LOGI(TAG, "Hardware RTC initialized successfully");
+        
+        // 显示硬件RTC详细状态
+        hardware_rtc_show_status();
+        
+        // 获取RTC状态信息
+        hardware_rtc_info_t rtc_info;
+        if (hardware_rtc_get_info(&rtc_info) == ESP_OK) {
+            ESP_LOGI(TAG, "RTC Info:");
+            ESP_LOGI(TAG, "  Boot time: %llu us", rtc_info.boot_time_us);
+            ESP_LOGI(TAG, "  Time set: %s", rtc_info.is_time_set ? "Yes" : "No");
+            ESP_LOGI(TAG, "  Status: %d", rtc_info.status);
+        }
+        
+        // 如果时间已设置，显示当前时间
+        hardware_rtc_time_t current_time;
+        if (hardware_rtc_get_time(&current_time) == ESP_OK) {
+            char time_str[64];
+            hardware_rtc_format_time(&current_time, time_str, sizeof(time_str), "datetime");
+            ESP_LOGI(TAG, "Current RTC time: %s", time_str);
+            
+            hardware_rtc_format_time(&current_time, time_str, sizeof(time_str), "chinese");
+            ESP_LOGI(TAG, "Current time (Chinese): %s", time_str);
+        }
+        
+        ESP_LOGI(TAG, "RTC uptime: %llu seconds", hardware_rtc_get_uptime_seconds());
+        
+        // 运行RTC演示程序（延迟2秒后执行，让系统稳定）
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        ESP_LOGI(TAG, "Running hardware RTC demo...");
+        esp_err_t demo_ret = local_hardware_rtc_demo();
+        if (demo_ret == ESP_OK) {
+            ESP_LOGI(TAG, "Hardware RTC demo completed successfully");
+        } else {
+            ESP_LOGE(TAG, "Hardware RTC demo failed: %s", esp_err_to_name(demo_ret));
+        }
+        
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize hardware RTC: %s", esp_err_to_name(rtc_ret));
+    }
+
     // 初始化时钟系统（15分钟定时同步）
     clock_init();
 
 
     // 初始化BOOT按钮
     init_boot_btn();
+
+    // 初始化SD卡 (SDIO模式)
+    ESP_LOGI(TAG, "Initializing SD card via SDIO...");
+    
+    esp_err_t sd_ret = sdcard_init();
+    if (sd_ret == ESP_OK) {
+        ESP_LOGI(TAG, "SD card initialized successfully via SDIO");
+        
+        // 获取并显示SD卡信息
+        sd_card_info_t sd_info;
+        if (sdcard_get_info(&sd_info) == ESP_OK) {
+            char total_size[32], used_size[32];
+            sdcard_format_size(sd_info.total_bytes, total_size, sizeof(total_size));
+            sdcard_format_size(sd_info.used_bytes, used_size, sizeof(used_size));
+            
+            ESP_LOGI(TAG, "SD Card Info (SDIO):");
+            ESP_LOGI(TAG, "  Name: %s", sd_info.card_name);
+            ESP_LOGI(TAG, "  Total: %s", total_size);
+            ESP_LOGI(TAG, "  Used: %s", used_size);
+            ESP_LOGI(TAG, "  Sectors: %lu (size: %lu bytes)", sd_info.sector_count, sd_info.sector_size);
+        }
+        
+        // 列出SD卡中的文件
+        sdcard_list_files();
+        
+        // 执行读写测试
+        esp_err_t test_ret = sdcard_test_rw();
+        if (test_ret == ESP_OK) {
+            ESP_LOGI(TAG, "SD card read/write test passed");
+        } else {
+            ESP_LOGW(TAG, "SD card read/write test failed: %s", esp_err_to_name(test_ret));
+        }
+    } else {
+        ESP_LOGW(TAG, "SD card initialization failed: %s", esp_err_to_name(sd_ret));
+        ESP_LOGW(TAG, "Continuing without SD card support...");
+    }
 
     // 初始化MPU6050传感器（1秒读取一次）
     // ESP_LOGI(TAG, "Initializing MPU6050 sensor...");
@@ -561,6 +720,14 @@ void app_main(void)
     // } else {
     //     ESP_LOGE(TAG, "Failed to initialize MPU6050 sensor: %s", esp_err_to_name(mpu_ret));
     // }
+
+    // 运行硬件RTC演示
+    esp_err_t rtc_demo_ret = local_hardware_rtc_demo();
+    if (rtc_demo_ret == ESP_OK) {
+        ESP_LOGI(TAG, "Hardware RTC demo completed successfully at startup");
+    } else {
+        ESP_LOGE(TAG, "Hardware RTC demo failed at startup: %s", esp_err_to_name(rtc_demo_ret));
+    }
 
     while (1)
     {
@@ -595,6 +762,12 @@ void app_main(void)
                 }
             }
         }
+        
+        // 轮询更新硬件RTC时间显示（只在分钟变化时更新）
+        hardware_rtc_poll_update_lvgl();
+        
+        // 检查屏幕电源管理（15秒无触摸自动息屏）
+        screen_power_check_sleep();
         
         // 使用较低的刷新频率，与TE信号同步，减少撕裂
         // 获取LVGL互斥信号量

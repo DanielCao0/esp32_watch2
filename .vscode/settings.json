@@ -1,6 +1,6 @@
 {
   "idf.adapterTargetName": "esp32s3",
-  "idf.portWin": "COM6",
+  "idf.portWin": "COM13",
   "files.associations": {
     "esp_lcd_touch.h": "c",
     "esp_lcd_sh8601.h": "c",

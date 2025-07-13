@@ -11,6 +11,7 @@
 #include "freertos/timers.h"
 #include "freertos/queue.h"
 #include "clock.h"
+#include "hardware_rtc.h"
 #include "ui.h"
 #include "ui/screens/ui_Screen1.h"
 #include "lvgl_lock.h"
@@ -97,10 +98,10 @@ static void update_lvgl_time_display(void)
 }
 
 // UI更新定时器回调函数（只发送事件）
-static void ui_update_timer_callback(TimerHandle_t timer)
-{
-    send_clock_event(CLOCK_EVENT_UPDATE_UI);
-}
+// static void ui_update_timer_callback(TimerHandle_t timer)
+// {
+//     send_clock_event(CLOCK_EVENT_UPDATE_UI);
+// }
 
 // 判断WiFi是否已连接
 bool is_wifi_connected()
@@ -158,6 +159,38 @@ void obtain_beijing_time()
              timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
              timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
 
+    // 设置硬件RTC的时间
+    ESP_LOGI(TAG, "Setting hardware RTC time from NTP sync...");
+    
+    // 转换为硬件RTC时间结构
+    hardware_rtc_time_t rtc_time = {
+        .year = timeinfo.tm_year + 1900,
+        .month = timeinfo.tm_mon + 1,
+        .day = timeinfo.tm_mday,
+        .hour = timeinfo.tm_hour,
+        .minute = timeinfo.tm_min,
+        .second = timeinfo.tm_sec,
+        .weekday = timeinfo.tm_wday
+    };
+    
+    // 设置硬件RTC时间
+    esp_err_t rtc_ret = hardware_rtc_set_time(&rtc_time);
+    if (rtc_ret == ESP_OK) {
+        ESP_LOGI(TAG, "Hardware RTC time set successfully from NTP");
+        
+        // 也可以调用NTP同步API（如果硬件RTC支持）
+        time_t ntp_timestamp = now;
+        uint64_t ntp_timestamp_us = (uint64_t)ntp_timestamp * 1000000;
+        esp_err_t sync_ret = hardware_rtc_sync_from_ntp(ntp_timestamp_us);
+        if (sync_ret == ESP_OK) {
+            ESP_LOGI(TAG, "Hardware RTC NTP sync completed");
+        } else {
+            ESP_LOGW(TAG, "Hardware RTC NTP sync failed: %s", esp_err_to_name(sync_ret));
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to set hardware RTC time: %s", esp_err_to_name(rtc_ret));
+    }
+    
     // 立即更新LVGL时间显示
     update_lvgl_time_display();       
 }
@@ -208,23 +241,23 @@ void clock_init(void)
     }
     
     // 创建UI更新定时器（每秒更新一次）
-    ui_update_timer = xTimerCreate("ui_update",
-                                   pdMS_TO_TICKS(1000),  // 1秒
-                                   pdTRUE,  // 自动重载
-                                   NULL,
-                                   ui_update_timer_callback);
+    // ui_update_timer = xTimerCreate("ui_update",
+    //                                pdMS_TO_TICKS(1000),  // 1秒
+    //                                pdTRUE,  // 自动重载
+    //                                NULL,
+    //                                ui_update_timer_callback);
     
-    if (ui_update_timer == NULL) {
-        ESP_LOGE(TAG, "Failed to create UI update timer");
-        return;
-    }
+    // if (ui_update_timer == NULL) {
+    //     ESP_LOGE(TAG, "Failed to create UI update timer");
+    //     return;
+    // }
     
     // 启动UI更新定时器
-    if (xTimerStart(ui_update_timer, 0) != pdPASS) {
-        ESP_LOGE(TAG, "Failed to start UI update timer");
-    } else {
-        ESP_LOGI(TAG, "UI update timer started (1 second interval)");
-    }
+    // if (xTimerStart(ui_update_timer, 0) != pdPASS) {
+    //     ESP_LOGE(TAG, "Failed to start UI update timer");
+    // } else {
+    //     ESP_LOGI(TAG, "UI update timer started (1 second interval)");
+    // }
 }
 
 // 停止时钟系统
