@@ -49,19 +49,22 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "sdkconfig.h"
 
 #include "lvgl.h"
-#include "lv_demos.h"
 #include "esp_lcd_sh8601.h"
+#include "esp_lcd_touch.h"
 #include "esp_lcd_touch_ft5x06.h"
 #include "led_strip.h"
+#include "mpu6050.h"
+#include "mpu6050_screen.h"
 
 #include "ui.h"
 #include "menu_screen.h"
 #include "wifi_connect.h"
 #include "clock.h"
 #include "lvgl_button.h"
-#include "mpu6050.h"
 #include "rtc.h"
 #include "hardware_rtc.h"
 #include "lvgl_lock.h"
@@ -70,6 +73,21 @@
 
 static const char *TAG = "example";
 static SemaphoreHandle_t lvgl_mux = NULL;
+
+// MPU6050 3D display screen
+static lv_obj_t* mpu6050_3d_screen = NULL;
+
+/**
+ * MPU6050数据更新回调函数
+ */
+static void mpu6050_data_update_callback(const mpu6050_data_t* data, void* user_data)
+{
+    // 在LVGL线程中更新3D屏幕
+    if (mpu6050_3d_screen != NULL && lvgl_lock(100)) {
+        mpu6050_screen_update(mpu6050_3d_screen, data);
+        lvgl_unlock();
+    }
+}
 
 /**
  * @brief 获取LVGL互斥信号量
@@ -407,16 +425,11 @@ static esp_err_t local_hardware_rtc_demo(void)
     return ESP_OK;
 }
 
-void app_main(void)
+// LED初始化函数
+static esp_err_t init_led_strip(led_strip_handle_t *led_strip)
 {
-    // 初始化LVGL互斥信号量
-    ESP_LOGI(TAG, "Creating LVGL mutex");
-    lvgl_mux = xSemaphoreCreateMutex();
-    if (lvgl_mux == NULL) {
-        ESP_LOGE(TAG, "Failed to create LVGL mutex");
-        return;
-    }
-
+    ESP_LOGI(TAG, "Initializing LED strip");
+    
     /// LED strip common configuration
     led_strip_config_t strip_config = {
         .strip_gpio_num = BLINK_GPIO,                                // The GPIO that connected to the LED strip's data line
@@ -425,7 +438,8 @@ void app_main(void)
         .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // The color component format is G-R-B
         .flags = {
             .invert_out = false, // don't invert the output signal
-        }};
+        }
+    };
 
     /// RMT backend specific configuration
     led_strip_rmt_config_t rmt_config = {
@@ -434,22 +448,58 @@ void app_main(void)
         .mem_block_symbols = 64,           // the memory size of each RMT channel, in words (4 bytes)
         .flags = {
             .with_dma = false, // DMA feature is available on chips like ESP32-S3/P4
-        }};
+        }
+    };
 
     /// Create the LED strip object
-    led_strip_handle_t led_strip;
-    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
+    esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config, led_strip);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create LED strip: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
-    // 创建LED呼吸灯任务
-    // xTaskCreate(led_breathing_task, "led_breathing", 2048, led_strip, 5, NULL);
+    ESP_LOGI(TAG, "LED strip initialized successfully");
+    return ESP_OK;
+}
 
-    // 初始化TE信号
+// GPIO初始化函数
+static esp_err_t init_gpio(void)
+{
+    ESP_LOGI(TAG, "Initializing GPIO");
+    
+    // Set GPIO11 high  这是屏幕的电源使能
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << 11,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+    gpio_set_level(11, 1);
+
+#if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
+    ESP_LOGI(TAG, "Initialize LCD backlight GPIO");
+    gpio_config_t bk_gpio_config = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = 1ULL << EXAMPLE_PIN_NUM_BK_LIGHT
+    };
+    ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
+#endif
+
+    return ESP_OK;
+}
+
+// TE信号初始化函数
+static esp_err_t init_te_signal(void)
+{
     ESP_LOGI(TAG, "Initialize TE signal");
     
     // 创建TE信号量
     te_sem = xSemaphoreCreateBinary();
     if (te_sem == NULL) {
         ESP_LOGE(TAG, "Failed to create TE semaphore");
+        return ESP_FAIL;
     }
     
     // 配置TE引脚为输入，启用上拉
@@ -458,7 +508,7 @@ void app_main(void)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_POSEDGE,  // TE信号上升沿触发
+        .intr_type = GPIO_INTR_POSEDGE  // TE信号上升沿触发
     };
     ESP_ERROR_CHECK(gpio_config(&te_gpio_config));
     
@@ -468,26 +518,13 @@ void app_main(void)
     // 添加TE引脚中断处理程序
     ESP_ERROR_CHECK(gpio_isr_handler_add(EXAMPLE_PIN_NUM_LCD_TE, te_gpio_isr_handler, NULL));
 
-    // static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
-    // contains callback functions
-    // Set GPIO11 high  这是屏幕的电源使能
-    gpio_config_t io_conf = {
-        .pin_bit_mask = 1ULL << 11,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE};
-    ESP_ERROR_CHECK(gpio_config(&io_conf));
-    gpio_set_level(11, 1);
+    ESP_LOGI(TAG, "TE signal initialized successfully");
+    return ESP_OK;
+}
 
-#if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
-    ESP_LOGI(TAG, "Turn off LCD backlight");
-    gpio_config_t bk_gpio_config = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = 1ULL << EXAMPLE_PIN_NUM_BK_LIGHT};
-    ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
-#endif
-
+// LCD初始化函数
+static esp_err_t init_lcd_panel(esp_lcd_panel_handle_t *panel_handle)
+{
     ESP_LOGI(TAG, "Initialize SPI bus");
     const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(EXAMPLE_PIN_NUM_LCD_PCLK,
                                                                  EXAMPLE_PIN_NUM_LCD_DATA0,
@@ -512,7 +549,6 @@ void app_main(void)
     // Attach the LCD to the SPI bus
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle));
 
-    esp_lcd_panel_handle_t panel_handle = NULL;
     const esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST,
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
@@ -520,21 +556,25 @@ void app_main(void)
         .vendor_config = &vendor_config,
     };
     ESP_LOGI(TAG, "Install SH8601 panel driver");
-    ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(io_handle, &panel_config, &panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
-    // user can flush pre-defined pattern to the screen before we turn on the screen or backlight
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(io_handle, &panel_config, panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(*panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(*panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(*panel_handle, true));
 
-    // 使用 esp_lcd_panel_init 相关接口画一个 10x10 的框
-    // 这里只能直接操作底层显存，画一个 10x10 区域为白色
-    // uint16_t color = 0x0000; // 16位黑色
-    // uint16_t buf[10 * 10];
-    // for(int i = 0; i < 100; i++) buf[i] = color;
-    // esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 100, 100, buf);
+#if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
+    ESP_LOGI(TAG, "Turn on LCD backlight");
+    gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL);
+#endif
 
+    ESP_LOGI(TAG, "LCD panel initialized successfully");
+    return ESP_OK;
+}
+
+// 触摸屏初始化函数
 #if EXAMPLE_USE_TOUCH
-    ESP_LOGI(TAG, "Initialize I2C bus");
+static esp_err_t init_touch_panel(void)
+{
+    ESP_LOGI(TAG, "Initialize I2C bus for touch");
     const i2c_config_t i2c_conf = {
         .mode = I2C_MODE_MASTER,
         .sda_io_num = EXAMPLE_PIN_NUM_TOUCH_SDA,
@@ -569,13 +609,15 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Initialize touch controller");
     ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &tp_cfg, &tp));
+
+    ESP_LOGI(TAG, "Touch panel initialized successfully");
+    return ESP_OK;
+}
 #endif
 
-#if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
-    ESP_LOGI(TAG, "Turn on LCD backlight");
-    gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL);
-#endif
-
+// LVGL初始化函数
+static esp_err_t init_lvgl(esp_lcd_panel_handle_t panel_handle)
+{
     ESP_LOGI(TAG, "Initialize LVGL library");
     lv_init();
     lv_tick_set_cb(my_tick_get_cb);
@@ -596,6 +638,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to initialize screen power management: %s", esp_err_to_name(screen_power_ret));
     }
 
+    // 分配LVGL缓冲区
     LV_ATTRIBUTE_MEM_ALIGN
     static uint8_t *buf_1_1 = NULL;
     LV_ATTRIBUTE_MEM_ALIGN
@@ -607,18 +650,33 @@ void app_main(void)
     assert(buf_1_2);
     lv_display_set_buffers(disp_drv, buf_1_1, buf_1_2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
+    // 初始化触摸输入设备
     lv_indev_t *indev = lv_indev_create();              /* Create input device connected to Default Display. */
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);    /* Touch pad is a pointer-like device. */
     lv_indev_set_read_cb(indev, example_lvgl_touch_cb); /* Set driver function. */
     lv_indev_set_user_data(indev, tp);                  /* 绑定 tp 句柄到 user_data，供回调使用 */
 
-    //list_menu_setup();
-    //home_screen_custom_setup();
-    ui_init(); // 初始化UI
+    // 初始化UI
+    ui_init();
 
-    wifi_connect_init();   //我放在LVGL的前面 LVGL就会初始化失败，放在后面就可以
+    // 创建MPU6050 3D显示屏幕
+    if (lvgl_lock(1000)) {
+        mpu6050_3d_screen = mpu6050_screen_create(lv_scr_act());
+        if (mpu6050_3d_screen != NULL) {
+            ESP_LOGI(TAG, "MPU6050 3D screen created successfully");
+        } else {
+            ESP_LOGE(TAG, "Failed to create MPU6050 3D screen");
+        }
+        lvgl_unlock();
+    }
 
-    // 初始化硬件RTC
+    ESP_LOGI(TAG, "LVGL initialized successfully");
+    return ESP_OK;
+}
+
+// 硬件RTC初始化函数
+static esp_err_t init_hardware_rtc(void)
+{
     ESP_LOGI(TAG, "Initializing hardware RTC...");
     esp_err_t rtc_ret = hardware_rtc_init();
     if (rtc_ret == ESP_OK) {
@@ -662,15 +720,13 @@ void app_main(void)
     } else {
         ESP_LOGE(TAG, "Failed to initialize hardware RTC: %s", esp_err_to_name(rtc_ret));
     }
+    
+    return rtc_ret;
+}
 
-    // 初始化时钟系统（15分钟定时同步）
-    clock_init();
-
-
-    // 初始化BOOT按钮
-    init_boot_btn();
-
-    // 初始化SD卡 (SDIO模式)
+// SD卡初始化函数
+static esp_err_t init_sdcard(void)
+{
     ESP_LOGI(TAG, "Initializing SD card via SDIO...");
     
     esp_err_t sd_ret = sdcard_init();
@@ -705,32 +761,14 @@ void app_main(void)
         ESP_LOGW(TAG, "SD card initialization failed: %s", esp_err_to_name(sd_ret));
         ESP_LOGW(TAG, "Continuing without SD card support...");
     }
+    
+    return sd_ret;
+}
 
-    // 初始化MPU6050传感器（1秒读取一次）
-    // ESP_LOGI(TAG, "Initializing MPU6050 sensor...");
-    // esp_err_t mpu_ret = mpu6050_init();
-    // if (mpu_ret == ESP_OK) {
-    //     // 启动1秒定时读取任务
-    //     mpu_ret = mpu6050_start_reading_task_with_interval(1000);  // 1000ms = 1秒
-    //     if (mpu_ret == ESP_OK) {
-    //         ESP_LOGI(TAG, "MPU6050 sensor initialized and task started (1 second interval)");
-    //     } else {
-    //         ESP_LOGE(TAG, "Failed to start MPU6050 reading task: %s", esp_err_to_name(mpu_ret));
-    //     }
-    // } else {
-    //     ESP_LOGE(TAG, "Failed to initialize MPU6050 sensor: %s", esp_err_to_name(mpu_ret));
-    // }
-
-    // 运行硬件RTC演示
-    esp_err_t rtc_demo_ret = local_hardware_rtc_demo();
-    if (rtc_demo_ret == ESP_OK) {
-        ESP_LOGI(TAG, "Hardware RTC demo completed successfully at startup");
-    } else {
-        ESP_LOGE(TAG, "Hardware RTC demo failed at startup: %s", esp_err_to_name(rtc_demo_ret));
-    }
-
-    while (1)
-    {
+// 主事件循环
+static void main_event_loop(void)
+{
+    while (1) {
         // 检查并处理按钮事件
         QueueHandle_t btn_queue = get_button_event_queue();
         if (btn_queue != NULL) {
@@ -779,4 +817,87 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(1)); // 短暂延时，避免过度占用CPU
         }
     }
+}
+
+void app_main(void)
+{
+    esp_lcd_panel_handle_t panel_handle = NULL;
+    led_strip_handle_t led_strip = NULL;
+    
+    // 初始化LVGL互斥信号量
+    ESP_LOGI(TAG, "Creating LVGL mutex");
+    lvgl_mux = xSemaphoreCreateMutex();
+    if (lvgl_mux == NULL) {
+        ESP_LOGE(TAG, "Failed to create LVGL mutex");
+        return;
+    }
+
+    // 初始化LED灯带
+    ESP_ERROR_CHECK(init_led_strip(&led_strip));
+
+    // 创建LED呼吸灯任务（可选）
+    // xTaskCreate(led_breathing_task, "led_breathing", 2048, led_strip, 5, NULL);
+
+    // 初始化TE信号
+    ESP_ERROR_CHECK(init_te_signal());
+
+    // 初始化GPIO
+    ESP_ERROR_CHECK(init_gpio());
+
+    // 初始化LCD面板
+    ESP_ERROR_CHECK(init_lcd_panel(&panel_handle));
+
+#if EXAMPLE_USE_TOUCH
+    // 初始化触摸屏
+    ESP_ERROR_CHECK(init_touch_panel());
+#endif
+
+    // 初始化LVGL
+    ESP_ERROR_CHECK(init_lvgl(panel_handle));
+
+    // 初始化WiFi连接
+    wifi_connect_init();
+
+    // 初始化硬件RTC
+    init_hardware_rtc();
+
+    // 初始化时钟系统（15分钟定时同步）
+    clock_init();
+
+    // 初始化BOOT按钮
+    init_boot_btn();
+
+    // 初始化SD卡
+    init_sdcard();
+
+    // 初始化MPU6050传感器（1秒读取一次）
+    ESP_LOGI(TAG, "Initializing MPU6050 sensor...");
+    esp_err_t mpu_ret = mpu6050_init();
+    if (mpu_ret == ESP_OK) {
+        // 注册数据更新回调函数
+        mpu6050_set_data_callback(mpu6050_data_update_callback, NULL);
+        
+        // 启动200ms定时读取任务（更快的更新频率用于3D显示）
+        mpu_ret = mpu6050_start_reading_task_with_interval(10);  // 200ms = 5Hz更新
+        if (mpu_ret == ESP_OK) {
+            ESP_LOGI(TAG, "MPU6050 sensor initialized and task started (200ms interval for 3D display)");
+            
+            // 显示MPU6050 3D屏幕
+            if (mpu6050_3d_screen != NULL) {
+                mpu6050_screen_set_visible(mpu6050_3d_screen, true);
+                ESP_LOGI(TAG, "MPU6050 3D screen is now visible");
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to start MPU6050 reading task: %s", esp_err_to_name(mpu_ret));
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize MPU6050 sensor: %s", esp_err_to_name(mpu_ret));
+    }
+
+    ESP_LOGI(TAG, "System initialization completed, entering main event loop");
+    
+    esp_log_level_set("FT5x06", ESP_LOG_NONE);
+    esp_log_level_set("lcd_panel.io.i2c", ESP_LOG_NONE);
+    // 进入主事件循环
+    main_event_loop();
 }

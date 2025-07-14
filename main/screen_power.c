@@ -19,7 +19,7 @@ typedef struct {
 static screen_power_state_t g_screen_power = {
     .is_awake = true,
     .last_touch_time = 0,
-    .sleep_timeout_ms = 15000,      // 默认15秒
+    .sleep_timeout_ms = 30000,      // 默认15秒
     .panel = NULL,
     .mutex = NULL
 };

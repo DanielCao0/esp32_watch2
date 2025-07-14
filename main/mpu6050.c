@@ -54,6 +54,10 @@ static mpu6050_data_t latest_data = {0};
 static SemaphoreHandle_t data_mutex = NULL;
 static uint32_t reading_interval_ms = 100;  // Default 100ms interval
 
+// Callback support
+static mpu6050_data_callback_t data_callback = NULL;
+static void* callback_user_data = NULL;
+
 /**
  * Write a single byte to MPU6050 register
  */
@@ -109,41 +113,19 @@ static float mpu6050_calculate_pitch(float accel_x, float accel_y, float accel_z
 }
 
 /**
- * Initialize I2C bus for MPU6050
+ * Initialize I2C bus for MPU6050 (Skip if already initialized by touch screen)
  */
 esp_err_t mpu6050_i2c_init(void)
 {
-    if (mpu6050_initialized) {
-        ESP_LOGW(TAG, "I2C already initialized");
-        return ESP_OK;
-    }
-
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = MPU6050_I2C_SDA_PIN,
-        .scl_io_num = MPU6050_I2C_SCL_PIN,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = MPU6050_I2C_FREQ,
-    };
-
-    esp_err_t ret = i2c_param_config(MPU6050_I2C_PORT, &conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C param config failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = i2c_driver_install(MPU6050_I2C_PORT, conf.mode, 0, 0, 0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C driver install failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ESP_LOGI(TAG, "I2C initialized successfully (SDA: GPIO%d, SCL: GPIO%d, Freq: %d Hz)",
-             MPU6050_I2C_SDA_PIN, MPU6050_I2C_SCL_PIN, MPU6050_I2C_FREQ);
-
+    // I2C总线已经被触摸屏初始化过了，直接返回成功
+    // Touch screen has already initialized the I2C bus, just return success
+    ESP_LOGI(TAG, "Using existing I2C bus (SDA: GPIO%d, SCL: GPIO%d) - already initialized by touch screen",
+             MPU6050_I2C_SDA_PIN, MPU6050_I2C_SCL_PIN);
+    
     return ESP_OK;
 }
+
+
 
 /**
  * Initialize MPU6050 sensor
@@ -175,12 +157,23 @@ esp_err_t mpu6050_init(void)
         return ret;
     }
 
-    if (who_am_i != 0x68) {
-        ESP_LOGE(TAG, "Invalid WHO_AM_I value: 0x%02X (expected 0x68)", who_am_i);
-        return ESP_ERR_INVALID_RESPONSE;
-    }
+    ESP_LOGI(TAG, "Read WHO_AM_I register: 0x%02X", who_am_i);
 
-    ESP_LOGI(TAG, "MPU6050 detected, WHO_AM_I: 0x%02X", who_am_i);
+    // Check for different possible sensor types
+    if (who_am_i == 0x68) {
+        ESP_LOGI(TAG, "MPU6050 detected (WHO_AM_I: 0x68)");
+    } else if (who_am_i == 0x70) {
+        ESP_LOGI(TAG, "MPU6500 detected (WHO_AM_I: 0x70) - compatible with MPU6050");
+    } else if (who_am_i == 0x98) {
+        ESP_LOGI(TAG, "ICM20602 detected (WHO_AM_I: 0x98) - trying compatibility mode");
+        // ICM20602 is generally compatible with MPU6050 register layout
+    } else if (who_am_i == 0x11) {
+        ESP_LOGI(TAG, "ICM20648 detected (WHO_AM_I: 0x11) - trying compatibility mode");
+    } else {
+        ESP_LOGW(TAG, "Unknown sensor detected (WHO_AM_I: 0x%02X)", who_am_i);
+        ESP_LOGW(TAG, "Attempting to continue with MPU6050 compatibility mode...");
+        ESP_LOGW(TAG, "Note: This sensor may not be fully compatible with MPU6050");
+    }
 
     // Wake up the MPU6050 (exit sleep mode)
     ret = mpu6050_write_byte(MPU6050_REG_PWR_MGMT_1, MPU6050_CLOCK_PLL_XGYRO);
@@ -289,52 +282,6 @@ esp_err_t mpu6050_read_data(mpu6050_data_t *data)
 }
 
 /**
- * Get the latest sensor data (thread-safe)
- */
-esp_err_t mpu6050_get_latest_data(mpu6050_data_t *data)
-{
-    if (data == NULL) {
-        ESP_LOGE(TAG, "Invalid data pointer");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (data_mutex == NULL) {
-        ESP_LOGE(TAG, "Data mutex not initialized");
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    if (xSemaphoreTake(data_mutex, portMAX_DELAY) == pdTRUE) {
-        *data = latest_data;
-        xSemaphoreGive(data_mutex);
-        return ESP_OK;
-    }
-
-    ESP_LOGE(TAG, "Failed to take data mutex");
-    return ESP_ERR_TIMEOUT;
-}
-
-/**
- * Print formatted sensor data
- */
-void mpu6050_print_data(const mpu6050_data_t *data)
-{
-    if (data == NULL) {
-        ESP_LOGE(TAG, "Invalid data pointer for printing");
-        return;
-    }
-
-    ESP_LOGI(TAG, "MPU6050 Data:");
-    ESP_LOGI(TAG, "  Accelerometer: X=%.3f g, Y=%.3f g, Z=%.3f g",
-             data->accel_x, data->accel_y, data->accel_z);
-    ESP_LOGI(TAG, "  Gyroscope:     X=%.2f°/s, Y=%.2f°/s, Z=%.2f°/s",
-             data->gyro_x, data->gyro_y, data->gyro_z);
-    ESP_LOGI(TAG, "  Temperature:   %.2f°C", data->temperature);
-    ESP_LOGI(TAG, "  Orientation:   Roll=%.1f°, Pitch=%.1f°",
-             data->roll, data->pitch);
-    ESP_LOGI(TAG, "  Timestamp:     %lld μs", data->timestamp);
-}
-
-/**
  * Print compact formatted sensor data (single line)
  */
 void mpu6050_print_data_compact(const mpu6050_data_t *data)
@@ -370,6 +317,11 @@ static void mpu6050_reading_task(void *pvParameters)
             if (data_mutex != NULL && xSemaphoreTake(data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 latest_data = data;
                 xSemaphoreGive(data_mutex);
+            }
+
+            // Call the registered callback function if available
+            if (data_callback != NULL) {
+                data_callback(&data, callback_user_data);
             }
 
             success_count++;
@@ -467,6 +419,21 @@ esp_err_t mpu6050_stop_reading_task(void)
 }
 
 /**
+ * Set data update callback
+ */
+void mpu6050_set_data_callback(mpu6050_data_callback_t callback, void* user_data)
+{
+    data_callback = callback;
+    callback_user_data = user_data;
+    
+    if (callback != NULL) {
+        ESP_LOGI(TAG, "MPU6050 data callback registered");
+    } else {
+        ESP_LOGI(TAG, "MPU6050 data callback unregistered");
+    }
+}
+
+/**
  * Check if MPU6050 is initialized
  */
 bool mpu6050_is_initialized(void)
@@ -501,14 +468,40 @@ esp_err_t mpu6050_deinit(void)
         data_mutex = NULL;
     }
 
-    // Uninstall I2C driver
-    esp_err_t ret = i2c_driver_delete(MPU6050_I2C_PORT);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to delete I2C driver: %s", esp_err_to_name(ret));
-    }
+    // 不要删除I2C驱动，因为触摸屏还在使用
+    // Don't delete I2C driver as it's shared with touch screen
+    ESP_LOGI(TAG, "MPU6050 deinitialized (I2C driver kept for touch screen)");
 
     mpu6050_initialized = false;
-    ESP_LOGI(TAG, "MPU6050 deinitialized");
 
+    return ESP_OK;
+}
+
+/**
+ * Register a callback function for MPU6050 data
+ */
+esp_err_t mpu6050_register_data_callback(mpu6050_data_callback_t callback, void* user_data)
+{
+    if (callback == NULL) {
+        ESP_LOGE(TAG, "Invalid callback function");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    data_callback = callback;
+    callback_user_data = user_data;
+
+    ESP_LOGI(TAG, "MPU6050 data callback registered");
+    return ESP_OK;
+}
+
+/**
+ * Unregister the callback function for MPU6050 data
+ */
+esp_err_t mpu6050_unregister_data_callback(void)
+{
+    data_callback = NULL;
+    callback_user_data = NULL;
+
+    ESP_LOGI(TAG, "MPU6050 data callback unregistered");
     return ESP_OK;
 }

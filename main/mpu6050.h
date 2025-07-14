@@ -60,6 +60,14 @@ typedef struct {
 } mpu6050_data_t;
 
 /**
+ * @brief Callback function type for MPU6050 data updates
+ * 
+ * @param data Pointer to latest MPU6050 data
+ * @param user_data User-defined data pointer
+ */
+typedef void (*mpu6050_data_callback_t)(const mpu6050_data_t* data, void* user_data);
+
+/**
  * @brief Initialize I2C bus for MPU6050
  * 
  * Configures I2C master mode with the following settings:
@@ -111,31 +119,6 @@ esp_err_t mpu6050_read_raw(mpu6050_raw_data_t *raw_data);
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t mpu6050_read_data(mpu6050_data_t *data);
-
-/**
- * @brief Get the latest sensor data (thread-safe)
- * 
- * Returns the most recent data read by the background task.
- * This function is thread-safe and uses a mutex for data protection.
- * 
- * @param data Pointer to store latest data
- * @return ESP_OK on success, error code otherwise
- */
-esp_err_t mpu6050_get_latest_data(mpu6050_data_t *data);
-
-/**
- * @brief Print formatted sensor data
- * 
- * Prints detailed sensor data in multiple lines:
- * - Accelerometer values (g)
- * - Gyroscope values (degrees/second)
- * - Temperature (Celsius)
- * - Orientation angles (degrees)
- * - Timestamp (microseconds)
- * 
- * @param data Pointer to data structure to print
- */
-void mpu6050_print_data(const mpu6050_data_t *data);
 
 /**
  * @brief Print compact formatted sensor data (single line)
@@ -198,6 +181,17 @@ bool mpu6050_is_initialized(void);
  * @return true if task is running, false otherwise
  */
 bool mpu6050_is_task_running(void);
+
+/**
+ * @brief Set data update callback
+ * 
+ * Sets a callback function that will be called whenever new
+ * MPU6050 data is available from the reading task.
+ * 
+ * @param callback Callback function to call with new data
+ * @param user_data User data to pass to callback
+ */
+void mpu6050_set_data_callback(mpu6050_data_callback_t callback, void* user_data);
 
 /**
  * @brief Deinitialize MPU6050 and cleanup resources

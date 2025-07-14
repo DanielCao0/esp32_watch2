@@ -22,5 +22,7 @@
   ],
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
-  ]
+  ],
+  "idf.pythonInstallPath": "/usr/bin/python",
+  "idf.port": "/dev/ttyACM0"
 }
