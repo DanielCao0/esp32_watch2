@@ -47,22 +47,44 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.0.7
+  espressif/led_strip:
+    component_hash: b578eb926d9f6402fd45398b53c9bd5d1b7a15c1b2974d25aa3088e6c79b0b4c
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.0.1
+  espressif/mpu6050:
+    component_hash: d69219ccb141372b863c511749ffbeab28417ac71c205d7ed7030c308e1b6832
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.0
   idf:
     source:
       type: idf
     version: 5.4.1
   lvgl/lvgl:
-    component_hash: d7c1ac037ae6e85d94897f807d6e7ba0946a83e720074fc95a4f6241da9f9f53
+    component_hash: b702d642e03e95928046d5c6726558e6444e112420c77efa5fdb6650b0a13c5d
     dependencies: []
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 8.4.0
+    version: 9.3.0
 direct_dependencies:
 - espressif/esp_lcd_sh8601
 - espressif/esp_lcd_touch_ft5x06
+- espressif/led_strip
+- espressif/mpu6050
 - idf
 - lvgl/lvgl
-manifest_hash: b7be304b3e0f511f2aeeedcaf58fc2edf74487cf7e0922b3d15ed52d4363d96e
+manifest_hash: be14a2d48601c50a84584ef373f3e833992e797e42247a331b58e8de4e1dcad0
 target: esp32s3
 version: 2.0.0
