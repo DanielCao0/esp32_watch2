@@ -1,7 +1,10 @@
 #include "menu_screen.h"
 #include "lvgl.h"
+#include "esp_log.h"
+#include "mpu6050_screen.h"
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -23,7 +26,7 @@
 
 // Apple Watch 应用名称
 static const char* app_names[SCREEN_BODY_MAX] = {
-    "Clock", "Settings", "Messages", "Phone", "Mail", "Camera", "Health",
+    "Clock", "Settings", "Messages", "Phone", "Mail", "Camera", "MPU6050",
     "Wallet", "Music", "Photos", "Weather", "Maps", "Calendar", "Timer",
     "Notes", "Reminders", "News", "Stocks", "Podcasts", "TV", "Radio",
     "Fitness", "Sleep", "Activity", "Heart", "Compass", "Calculator",
@@ -58,6 +61,7 @@ static bool is_honeycomb_initialized = false;
 // 前向声明
 static void update_icons(void);
 static void inertia_timer_cb(lv_timer_t * timer);
+static void icon_click_event_cb(lv_event_t * e);
 
 // 恢复到简单有效的圆形分层布局
 static void calculate_honeycomb_positions(void) {
@@ -271,6 +275,49 @@ static void inertia_timer_cb(lv_timer_t * timer) {
     update_icons();
 }
 
+// 图标点击事件处理
+static void icon_click_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    
+    if (code == LV_EVENT_CLICKED) {
+        lv_obj_t * target = lv_event_get_target(e);
+        
+        // 找到被点击的图标索引
+        int clicked_index = -1;
+        for (int i = 0; i < SCREEN_BODY_MAX; i++) {
+            if (icons[i].cont == target) {
+                clicked_index = i;
+                break;
+            }
+        }
+        
+        if (clicked_index >= 0) {
+            const char* app_name = app_names[clicked_index];
+            printf("Clicked app: %s (index: %d)\n", app_name, clicked_index);
+            
+            // 处理特定应用的点击
+            if (strcmp(app_name, "MPU6050") == 0) {
+                // 声明来自main.c的函数
+                extern lv_obj_t* get_mpu6050_3d_screen(void);
+                
+                // 切换到MPU6050 3D界面
+                lv_obj_t* mpu6050_3d_screen = get_mpu6050_3d_screen();
+                if (mpu6050_3d_screen != NULL) {
+                    lv_screen_load(mpu6050_3d_screen);
+                    printf("Switched to MPU6050 3D screen\n");
+                } else {
+                    printf("MPU6050 3D screen not initialized\n");
+                }
+            } else if (strcmp(app_name, "Clock") == 0) {
+                // 切换回主界面（时钟）
+                lv_screen_load(lv_screen_active());  // 或者指向主时钟屏幕
+                printf("Switched to Clock\n");
+            }
+            // 可以在这里添加其他应用的处理
+        }
+    }
+}
+
 // 拖动事件处理 - 带惯性效果
 static void drag_event_cb(lv_event_t * e) {
     static lv_point_t last_point = {0, 0};
@@ -444,6 +491,9 @@ lv_obj_t* create_honeycomb_menu_screen(void) {
         lv_obj_add_event_cb(icons[i].cont, drag_event_cb, LV_EVENT_PRESSED, NULL);
         lv_obj_add_event_cb(icons[i].cont, drag_event_cb, LV_EVENT_PRESSING, NULL);
         lv_obj_add_event_cb(icons[i].cont, drag_event_cb, LV_EVENT_RELEASED, NULL);
+        
+        // 添加点击事件
+        lv_obj_add_event_cb(icons[i].cont, icon_click_event_cb, LV_EVENT_CLICKED, NULL);
         
         // 创建标签
         icons[i].label = lv_label_create(icons[i].cont);

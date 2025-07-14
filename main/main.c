@@ -78,26 +78,26 @@ static SemaphoreHandle_t lvgl_mux = NULL;
 static lv_obj_t* mpu6050_3d_screen = NULL;
 
 /**
+ * 获取MPU6050 3D屏幕对象
+ */
+lv_obj_t* get_mpu6050_3d_screen(void)
+{
+    return mpu6050_3d_screen;
+}
+
+/**
  * MPU6050数据更新回调函数
  */
 static void mpu6050_data_update_callback(const mpu6050_data_t* data, void* user_data)
 {
-    // 添加调试信息
-    static uint32_t callback_count = 0;
-    callback_count++;
-    
-    if (callback_count % 25 == 0) {  // 每25次回调打印一次 (5秒钟打印一次，如果是200ms间隔)
-        ESP_LOGI("MPU6050_CALLBACK", "Callback #%lu: Accel[%.2f,%.2f,%.2f] Roll=%.1f° Pitch=%.1f°", 
-                 callback_count, data->accel_x, data->accel_y, data->accel_z, data->roll, data->pitch);
-    }
-    
-    // 在LVGL线程中更新3D屏幕
+    // 检查当前显示的是否是MPU6050屏幕
     if (mpu6050_3d_screen != NULL && lvgl_lock(100)) {
-        mpu6050_screen_update(mpu6050_3d_screen, data);
+        lv_obj_t* current_screen = lv_screen_active();
+        if (current_screen == mpu6050_3d_screen) {
+            // 只有当MPU6050屏幕正在显示时才更新
+            mpu6050_screen_update(mpu6050_3d_screen, data);
+        }
         lvgl_unlock();
-    } else {
-        ESP_LOGW("MPU6050_CALLBACK", "Failed to update screen: screen=%p, lock=%s", 
-                 mpu6050_3d_screen, (mpu6050_3d_screen != NULL) ? "failed" : "null");
     }
 }
 
@@ -671,9 +671,9 @@ static esp_err_t init_lvgl(esp_lcd_panel_handle_t panel_handle)
     // 初始化UI
     ui_init();
 
-    // 创建MPU6050 3D显示屏幕
+    // 创建MPU6050 3D显示屏幕作为独立屏幕
     if (lvgl_lock(1000)) {
-        mpu6050_3d_screen = mpu6050_screen_create(lv_scr_act());
+        mpu6050_3d_screen = mpu6050_screen_create(NULL);  // 创建为独立屏幕
         if (mpu6050_3d_screen != NULL) {
             ESP_LOGI(TAG, "MPU6050 3D screen created successfully");
         } else {
@@ -893,12 +893,7 @@ void app_main(void)
         mpu_ret = mpu6050_start_reading_task_with_interval(10);  // 200ms = 5Hz更新
         if (mpu_ret == ESP_OK) {
             ESP_LOGI(TAG, "MPU6050 sensor initialized and task started (200ms interval for 3D display)");
-            
-            // 显示MPU6050 3D屏幕
-            if (mpu6050_3d_screen != NULL) {
-                mpu6050_screen_set_visible(mpu6050_3d_screen, true);
-                ESP_LOGI(TAG, "MPU6050 3D screen is now visible");
-            }
+            // MPU6050 3D屏幕已创建，但不自动显示，等待用户从菜单点击
         } else {
             ESP_LOGE(TAG, "Failed to start MPU6050 reading task: %s", esp_err_to_name(mpu_ret));
         }
