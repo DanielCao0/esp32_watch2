@@ -82,10 +82,22 @@ static lv_obj_t* mpu6050_3d_screen = NULL;
  */
 static void mpu6050_data_update_callback(const mpu6050_data_t* data, void* user_data)
 {
+    // 添加调试信息
+    static uint32_t callback_count = 0;
+    callback_count++;
+    
+    if (callback_count % 25 == 0) {  // 每25次回调打印一次 (5秒钟打印一次，如果是200ms间隔)
+        ESP_LOGI("MPU6050_CALLBACK", "Callback #%lu: Accel[%.2f,%.2f,%.2f] Roll=%.1f° Pitch=%.1f°", 
+                 callback_count, data->accel_x, data->accel_y, data->accel_z, data->roll, data->pitch);
+    }
+    
     // 在LVGL线程中更新3D屏幕
     if (mpu6050_3d_screen != NULL && lvgl_lock(100)) {
         mpu6050_screen_update(mpu6050_3d_screen, data);
         lvgl_unlock();
+    } else {
+        ESP_LOGW("MPU6050_CALLBACK", "Failed to update screen: screen=%p, lock=%s", 
+                 mpu6050_3d_screen, (mpu6050_3d_screen != NULL) ? "failed" : "null");
     }
 }
 

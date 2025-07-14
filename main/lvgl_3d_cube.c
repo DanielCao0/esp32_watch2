@@ -60,7 +60,23 @@ static point_3d_t rotate_x(const point_3d_t* p, float angle_rad)
 }
 
 /**
- * Rotate a 3D point around Z-axis (roll)
+ * Rotate a 3D point around Y-axis (roll)
+ */
+static point_3d_t rotate_y(const point_3d_t* p, float angle_rad)
+{
+    float cos_a = cosf(angle_rad);
+    float sin_a = sinf(angle_rad);
+    
+    point_3d_t result;
+    result.x = p->x * cos_a + p->z * sin_a;
+    result.y = p->y;
+    result.z = -p->x * sin_a + p->z * cos_a;
+    
+    return result;
+}
+
+/**
+ * Rotate a 3D point around Z-axis (yaw)
  */
 static point_3d_t rotate_z(const point_3d_t* p, float angle_rad)
 {
@@ -97,9 +113,9 @@ static void calculate_projected_vertices(cube_data_t* cube)
     float pitch_rad = DEG_TO_RAD(cube->pitch);
     
     for (int i = 0; i < 8; i++) {
-        // Apply rotations: first roll (Z), then pitch (X)
-        point_3d_t rotated = rotate_z(&cube->vertices[i], roll_rad);
-        rotated = rotate_x(&rotated, pitch_rad);
+        // Apply rotations: first pitch (X), then roll (Y)
+        point_3d_t rotated = rotate_x(&cube->vertices[i], pitch_rad);
+        rotated = rotate_y(&rotated, roll_rad);
         
         // Project to 2D
         cube->projected[i] = project_to_2d(&rotated, cube->center_x, cube->center_y);

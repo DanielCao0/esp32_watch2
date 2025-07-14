@@ -8,6 +8,7 @@
 #include "mpu6050_screen.h"
 #include "lvgl_3d_cube.h"
 #include "esp_log.h"
+#include <stdio.h>
 
 static const char *TAG = "MPU6050_SCREEN";
 
@@ -143,38 +144,61 @@ void mpu6050_screen_update(lv_obj_t* screen, const mpu6050_data_t* data)
         return;
     }
     
+    // 添加调试信息
+    ESP_LOGI(TAG, "Updating screen - Accel[%.2f,%.2f,%.2f] Roll=%.1f° Pitch=%.1f°", 
+             data->accel_x, data->accel_y, data->accel_z, data->roll, data->pitch);
+    
     // Update 3D cube orientation
     if (screen_data.cube_3d != NULL) {
         lv_3d_cube_update_orientation(screen_data.cube_3d, data);
+    } else {
+        ESP_LOGW(TAG, "3D cube is NULL");
     }
     
-    // Update text labels
+    // Update text labels using sprintf for better float support
     if (screen_data.accel_label != NULL) {
-        lv_label_set_text_fmt(screen_data.accel_label, 
-                              "Accel: %.2f, %.2f, %.2f g",
-                              data->accel_x, data->accel_y, data->accel_z);
+        char accel_text[64];
+        sprintf(accel_text, "Accel: %.2f, %.2f, %.2f g", 
+                data->accel_x, data->accel_y, data->accel_z);
+        lv_label_set_text(screen_data.accel_label, accel_text);
+        ESP_LOGI(TAG, "Updated accel label: %s", accel_text);
+    } else {
+        ESP_LOGW(TAG, "Accel label is NULL");
     }
     
     if (screen_data.gyro_label != NULL) {
-        lv_label_set_text_fmt(screen_data.gyro_label,
-                              "Gyro: %.1f, %.1f, %.1f °/s",
-                              data->gyro_x, data->gyro_y, data->gyro_z);
+        char gyro_text[64];
+        sprintf(gyro_text, "Gyro: %.1f, %.1f, %.1f °/s",
+                data->gyro_x, data->gyro_y, data->gyro_z);
+        lv_label_set_text(screen_data.gyro_label, gyro_text);
+        ESP_LOGI(TAG, "Updated gyro label: %s", gyro_text);
+    } else {
+        ESP_LOGW(TAG, "Gyro label is NULL");
     }
     
     if (screen_data.angle_label != NULL) {
-        lv_label_set_text_fmt(screen_data.angle_label,
-                              "Roll: %.1f°  Pitch: %.1f°",
-                              data->roll, data->pitch);
+        char angle_text[64];
+        sprintf(angle_text, "Roll: %.1f°  Pitch: %.1f°",
+                data->roll, data->pitch);
+        lv_label_set_text(screen_data.angle_label, angle_text);
+        ESP_LOGI(TAG, "Updated angle label: %s", angle_text);
+    } else {
+        ESP_LOGW(TAG, "Angle label is NULL");
     }
     
     if (screen_data.temp_label != NULL) {
-        lv_label_set_text_fmt(screen_data.temp_label,
-                              "Temp: %.1f°C",
-                              data->temperature);
+        char temp_text[32];
+        sprintf(temp_text, "Temp: %.1f°C", data->temperature);
+        lv_label_set_text(screen_data.temp_label, temp_text);
+        ESP_LOGI(TAG, "Updated temp label: %s", temp_text);
+    } else {
+        ESP_LOGW(TAG, "Temp label is NULL");
     }
     
     if (screen_data.status_label != NULL) {
         lv_label_set_text(screen_data.status_label, "Status: Active");
+    } else {
+        ESP_LOGW(TAG, "Status label is NULL");
     }
 }
 
