@@ -70,6 +70,7 @@
 #include "lvgl_lock.h"
 #include "sdcard.h"
 #include "screen_power.h"
+#include "file_browser.h"
 
 static const char *TAG = "example";
 static SemaphoreHandle_t lvgl_mux = NULL;
@@ -679,6 +680,15 @@ static esp_err_t init_lvgl(esp_lcd_panel_handle_t panel_handle)
         } else {
             ESP_LOGE(TAG, "Failed to create MPU6050 3D screen");
         }
+        
+        // 创建文件浏览器屏幕
+        lv_obj_t* file_browser_screen = file_browser_create();
+        if (file_browser_screen != NULL) {
+            ESP_LOGI(TAG, "File browser screen created successfully");
+        } else {
+            ESP_LOGE(TAG, "Failed to create file browser screen");
+        }
+        
         lvgl_unlock();
     }
 

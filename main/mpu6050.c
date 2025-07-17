@@ -328,8 +328,8 @@ static void mpu6050_reading_task(void *pvParameters)
 
             // Print data every print_interval readings (approximately every 5 seconds)
             if (success_count % print_interval == 0) {
-                mpu6050_print_data_compact(&data);
-                ESP_LOGI(TAG, "MPU6050 Statistics: Success=%lu, Errors=%lu", success_count, error_count);
+                // mpu6050_print_data_compact(&data);
+                // ESP_LOGI(TAG, "MPU6050 Statistics: Success=%lu, Errors=%lu", success_count, error_count);
             }
         } else {
             error_count++;

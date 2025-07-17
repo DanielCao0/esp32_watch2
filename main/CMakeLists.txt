@@ -1,7 +1,7 @@
 file(GLOB_RECURSE SRC_UI ui/*.c)
 
 idf_component_register(
-    SRCS "screen_power.c" "sdcard.c" "rtc.c" "hardware_rtc.c" "mpu6050.c" "mpu6050_screen.c" "lvgl_3d_cube.c" "main.c" "wifi_connect.c" "clock.c" "lvgl_button.c"
+    SRCS "image_viewer.c" "btc.c" "file_browser.c" "screen_power.c" "sdcard.c" "rtc.c" "hardware_rtc.c" "mpu6050.c" "mpu6050_screen.c" "lvgl_3d_cube.c" "main.c" "wifi_connect.c" "clock.c" "lvgl_button.c" "music_player.c"
         ${SRC_UI}
         "menu_screen.c"
     INCLUDE_DIRS "." "ui"

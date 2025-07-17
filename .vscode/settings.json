@@ -5,7 +5,9 @@
     "esp_lcd_touch.h": "c",
     "esp_lcd_sh8601.h": "c",
     "mpu6050.h": "c",
-    "ui_screen1.h": "c"
+    "ui_screen1.h": "c",
+    "sdspi_host.h": "c",
+    "spi_common.h": "c"
   },
   "idf.flashType": "UART",
   "idf.customExtraVars": {

@@ -2,9 +2,14 @@
 #include "lvgl.h"
 #include "esp_log.h"
 #include "mpu6050_screen.h"
+#include "file_browser.h"
+#include "music_player.h"
+#include "image_viewer.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+static const char *TAG = "MENU_SCREEN";
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -24,14 +29,14 @@
 #define MIN_SCALE              0.15f    // 最小缩放（边缘）- 变得像点一样小
 #define SCALE_DISTANCE         220      // 缩放影响距离（稍微减小，让中心区域更突出）
 
-// Apple Watch 应用名称
+// Apple Watch 应用名称 - 重复有功能的应用以便测试
 static const char* app_names[SCREEN_BODY_MAX] = {
-    "Clock", "Settings", "Messages", "Phone", "Mail", "Camera", "MPU6050",
-    "Wallet", "Music", "Photos", "Weather", "Maps", "Calendar", "Timer",
-    "Notes", "Reminders", "News", "Stocks", "Podcasts", "TV", "Radio",
-    "Fitness", "Sleep", "Activity", "Heart", "Compass", "Calculator",
-    "Translate", "Voice", "Find My", "Remote", "Home", "Shortcuts",
-    "Flashlight", "Battery", "Control", "Store"
+    "Clock", "MPU6050", "Files", "Music", "Photos", "TV", "Clock",
+    "MPU6050", "Files", "Music", "Photos", "TV", "Clock", "MPU6050",
+    "Files", "Music", "Photos", "TV", "Clock", "MPU6050", "Files",
+    "Music", "Photos", "TV", "Clock", "MPU6050", "Files", "Music",
+    "Photos", "TV", "Clock", "MPU6050", "Files", "Music", "Photos",
+    "TV", "Clock"
 };
 
 // 简单的图标结构
@@ -293,7 +298,7 @@ static void icon_click_event_cb(lv_event_t * e) {
         
         if (clicked_index >= 0) {
             const char* app_name = app_names[clicked_index];
-            printf("Clicked app: %s (index: %d)\n", app_name, clicked_index);
+            ESP_LOGI(TAG, "Clicked app: %s (index: %d)", app_name, clicked_index);
             
             // 处理特定应用的点击
             if (strcmp(app_name, "MPU6050") == 0) {
@@ -304,14 +309,87 @@ static void icon_click_event_cb(lv_event_t * e) {
                 lv_obj_t* mpu6050_3d_screen = get_mpu6050_3d_screen();
                 if (mpu6050_3d_screen != NULL) {
                     lv_screen_load(mpu6050_3d_screen);
-                    printf("Switched to MPU6050 3D screen\n");
+                    ESP_LOGI(TAG, "Switched to MPU6050 3D screen");
                 } else {
-                    printf("MPU6050 3D screen not initialized\n");
+                    ESP_LOGW(TAG, "MPU6050 3D screen not initialized");
+                }
+            } else if (strcmp(app_name, "Files") == 0) {
+                // 切换到文件浏览器
+                lv_obj_t* file_browser_screen = get_file_browser_screen();
+                if (file_browser_screen != NULL) {
+                    //lv_screen_load(file_browser_screen);
+                    lv_scr_load_anim(file_browser_screen, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+
+                    // 强制刷新文件列表
+                    extern esp_err_t file_browser_refresh(const char* path);
+                    file_browser_refresh("/sdcard");
+                    ESP_LOGI(TAG, "Switched to File Browser screen");
+                } else {
+                    ESP_LOGW(TAG, "File Browser screen not initialized");
+                }
+            } else if (strcmp(app_name, "Music") == 0) {
+                // 切换到音乐播放器
+                lv_obj_t* music_player_screen = get_music_player_screen();
+                if (music_player_screen == NULL) {
+                    // 如果音乐播放器屏幕不存在，创建它
+                    music_player_screen = music_player_create();
+                }
+                if (music_player_screen != NULL) {
+                    lv_scr_load_anim(music_player_screen, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+                    ESP_LOGI(TAG, "Switched to Music Player screen");
+                } else {
+                    ESP_LOGE(TAG, "Music Player screen creation failed");
+                }
+            } else if (strcmp(app_name, "Photos") == 0) {
+                // 切换到图片浏览器
+                lv_obj_t* image_viewer_screen = get_image_viewer_screen();
+                if (image_viewer_screen == NULL) {
+                    // 如果图片浏览器屏幕不存在，创建它
+                    image_viewer_screen = image_viewer_create();
+                }
+                if (image_viewer_screen != NULL) {
+                    lv_scr_load_anim(image_viewer_screen, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+                    ESP_LOGI(TAG, "Switched to Image Viewer screen");
+                } else {
+                    ESP_LOGE(TAG, "Image Viewer screen creation failed");
                 }
             } else if (strcmp(app_name, "Clock") == 0) {
                 // 切换回主界面（时钟）
                 lv_screen_load(lv_screen_active());  // 或者指向主时钟屏幕
-                printf("Switched to Clock\n");
+                ESP_LOGI(TAG, "Switched to Clock");
+            } else if (strcmp(app_name, "TV") == 0) {
+                ESP_LOGI(TAG, "TV app clicked, attempting to load image...");
+                
+                lv_obj_t * img;
+                img = lv_image_create(lv_screen_active());
+                if (img == NULL) {
+                    ESP_LOGE(TAG, "Failed to create image object");
+                    return;
+                }
+                ESP_LOGI(TAG, "Image object created successfully");
+                
+                const char* image_path = "A:/sdcard/image/pexels1.png";
+                ESP_LOGI(TAG, "Attempting to load image from: %s", image_path);
+                
+                // 设置图片源
+                lv_image_set_src(img, image_path);
+                
+                // 检查图片是否加载成功
+                const void* src = lv_image_get_src(img);
+                if (src == NULL) {
+                    ESP_LOGE(TAG, "Image source is NULL, failed to load: %s", image_path);
+                    ESP_LOGE(TAG, "Possible reasons:");
+                    ESP_LOGE(TAG, "1. File doesn't exist at the specified path");
+                    ESP_LOGE(TAG, "2. File system not mounted correctly");
+                    ESP_LOGE(TAG, "3. File format not supported");
+                    ESP_LOGE(TAG, "4. A: drive not configured in LVGL");
+                } else {
+                    ESP_LOGI(TAG, "Image loaded successfully from: %s", image_path);
+                }
+                
+                lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+                lv_obj_move_foreground(img);
+                ESP_LOGI(TAG, "Image positioned at center of screen");
             }
             // 可以在这里添加其他应用的处理
         }
@@ -518,7 +596,7 @@ lv_obj_t* create_honeycomb_menu_screen(void) {
     global_offset_y = 0;
     is_honeycomb_initialized = true;
     
-    printf("Apple Watch Honeycomb Menu screen created with %d icons\n", SCREEN_BODY_MAX);
+    ESP_LOGI(TAG, "Apple Watch Honeycomb Menu screen created with %d icons", SCREEN_BODY_MAX);
     
     return honeycomb_screen;
 }
@@ -537,7 +615,7 @@ void show_honeycomb_menu(void) {
         update_icons();
     }
     
-    printf("Switched to Honeycomb Menu\n");
+    ESP_LOGI(TAG, "Switched to Honeycomb Menu");
 }
 
 // 隐藏蜂窝菜单界面（切换到其他界面）
@@ -548,7 +626,7 @@ void hide_honeycomb_menu(void) {
         inertia_timer = NULL;
     }
     
-    printf("Hiding Honeycomb Menu\n");
+    ESP_LOGI(TAG, "Hiding Honeycomb Menu");
 }
 
 // 重置蜂窝菜单到中心位置
@@ -570,7 +648,7 @@ void reset_honeycomb_menu(void) {
     // 更新图标位置
     update_icons();
     
-    printf("Honeycomb Menu reset to center\n");
+    ESP_LOGI(TAG, "Honeycomb Menu reset to center");
 }
 
 // 销毁蜂窝菜单界面（释放内存）
@@ -587,7 +665,7 @@ void destroy_honeycomb_menu(void) {
         honeycomb_screen = NULL;
         is_honeycomb_initialized = false;
         
-        printf("Honeycomb Menu destroyed\n");
+        ESP_LOGI(TAG, "Honeycomb Menu destroyed");
     }
 }
 
