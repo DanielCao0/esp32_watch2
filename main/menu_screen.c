@@ -63,6 +63,13 @@ static const float MIN_VELOCITY = 3.0f;  // 最小速度阈值（更大，更快
 static lv_obj_t *honeycomb_screen = NULL;
 static bool is_honeycomb_initialized = false;
 
+// 拖动状态跟踪变量
+static bool has_dragged = false;
+static float total_drag_distance = 0.0f;
+static const float DRAG_THRESHOLD = 15.0f;  // 增加拖动阈值，减少误判
+static uint32_t last_release_time = 0;  // 记录最后释放时间
+static const uint32_t CLICK_IGNORE_TIME = 50;  // 减少忽略时间
+
 // 前向声明
 static void update_icons(void);
 static void inertia_timer_cb(lv_timer_t * timer);
@@ -285,6 +292,28 @@ static void icon_click_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     
     if (code == LV_EVENT_CLICKED) {
+        // 检查是否在拖动释放后的忽略时间内
+        uint32_t current_time = lv_tick_get();
+        uint32_t time_since_release = current_time - last_release_time;
+        
+        // 如果超过300ms，自动重置拖动状态
+        if (time_since_release > 300) {
+            has_dragged = false;
+            total_drag_distance = 0.0f;
+        }
+        
+        // 只有明显拖动或刚释放的情况下才忽略点击
+        if (has_dragged && total_drag_distance > DRAG_THRESHOLD && 
+            time_since_release < CLICK_IGNORE_TIME) {
+            ESP_LOGI(TAG, "Ignoring click after drag (distance: %.1f, time_since_release: %lu)", 
+                     total_drag_distance, time_since_release);
+            return;
+        }
+        
+        // 对于小幅移动，当作正常点击处理
+        ESP_LOGI(TAG, "Processing click (distance: %.1f, time_since_release: %lu)", 
+                 total_drag_distance, time_since_release);
+        
         lv_obj_t * target = lv_event_get_target(e);
         
         // 找到被点击的图标索引
@@ -400,6 +429,7 @@ static void icon_click_event_cb(lv_event_t * e) {
 static void drag_event_cb(lv_event_t * e) {
     static lv_point_t last_point = {0, 0};
     static lv_point_t prev_point = {0, 0};
+    static lv_point_t start_point = {0, 0};  // 记录开始拖动的位置
     static bool is_dragging = false;
     static bool first_press = true;
     static uint32_t last_time = 0;
@@ -419,11 +449,16 @@ static void drag_event_cb(lv_event_t * e) {
         lv_indev_get_point(indev, &point);
         last_point = point;
         prev_point = point;
+        start_point = point;  // 记录开始位置
         is_dragging = true;
         first_press = true;
         last_time = current_time;
         velocity_x = 0;
         velocity_y = 0;
+        
+        // 重置拖动状态
+        has_dragged = false;
+        total_drag_distance = 0.0f;
         
     } else if (code == LV_EVENT_PRESSING) {
         if (is_dragging) {
@@ -443,8 +478,19 @@ static void drag_event_cb(lv_event_t * e) {
             float dx = point.x - last_point.x;
             float dy = point.y - last_point.y;
             
+            // 计算总拖动距离 - 只有在移动超过1像素时才累积
+            float step_distance = sqrtf(dx * dx + dy * dy);
+            if (step_distance > 1.0f) {
+                total_drag_distance += step_distance;
+            }
+            
+            // 检查是否超过拖动阈值
+            if (total_drag_distance > DRAG_THRESHOLD) {
+                has_dragged = true;
+            }
+            
             // 只有在移动距离足够大时才更新，避免微小抖动
-            if (fabsf(dx) > 0.5f || fabsf(dy) > 0.5f) {
+            if (fabsf(dx) > 1.0f || fabsf(dy) > 1.0f) {
                 // 更新全局偏移
                 global_offset_x += dx;
                 global_offset_y += dy;
@@ -476,6 +522,9 @@ static void drag_event_cb(lv_event_t * e) {
         is_dragging = false;
         first_press = true;
         
+        ESP_LOGD(TAG, "Drag released: total_distance=%.1f, has_dragged=%s", 
+                 total_drag_distance, has_dragged ? "true" : "false");
+        
         // 启动惯性动画（如果速度足够大）
         if (fabsf(velocity_x) >= MIN_VELOCITY || fabsf(velocity_y) >= MIN_VELOCITY) {
             // 转换为每帧的速度（假设60fps）
@@ -485,6 +534,15 @@ static void drag_event_cb(lv_event_t * e) {
             if (inertia_timer == NULL) {
                 inertia_timer = lv_timer_create(inertia_timer_cb, 16, NULL);  // ~60fps
             }
+        }
+        
+        // 记录释放时间，用于延迟处理点击事件
+        last_release_time = lv_tick_get();
+        
+        // 立即重置拖动状态如果移动距离很小
+        if (total_drag_distance <= DRAG_THRESHOLD) {
+            has_dragged = false;
+            total_drag_distance = 0.0f;
         }
     }
 }
@@ -626,6 +684,10 @@ void hide_honeycomb_menu(void) {
         inertia_timer = NULL;
     }
     
+    // 重置拖动状态
+    has_dragged = false;
+    total_drag_distance = 0.0f;
+    
     ESP_LOGI(TAG, "Hiding Honeycomb Menu");
 }
 
@@ -645,6 +707,10 @@ void reset_honeycomb_menu(void) {
     velocity_x = 0;
     velocity_y = 0;
     
+    // 重置拖动状态
+    has_dragged = false;
+    total_drag_distance = 0.0f;
+    
     // 更新图标位置
     update_icons();
     
@@ -659,6 +725,10 @@ void destroy_honeycomb_menu(void) {
             lv_timer_del(inertia_timer);
             inertia_timer = NULL;
         }
+        
+        // 重置拖动状态
+        has_dragged = false;
+        total_drag_distance = 0.0f;
         
         // 删除屏幕对象
         lv_obj_del(honeycomb_screen);
