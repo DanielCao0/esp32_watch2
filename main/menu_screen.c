@@ -1,6 +1,8 @@
 #include "menu_screen.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "mpu6050_screen.h"
 #include "file_browser.h"
 #include "music_player.h"
@@ -74,6 +76,7 @@ static const uint32_t CLICK_IGNORE_TIME = 50;  // 减少忽略时间
 static void update_icons(void);
 static void inertia_timer_cb(lv_timer_t * timer);
 static void icon_click_event_cb(lv_event_t * e);
+static void image_screen_click_cb(lv_event_t * e);
 
 // 恢复到简单有效的圆形分层布局
 static void calculate_honeycomb_positions(void) {
@@ -251,11 +254,11 @@ static void update_icons(void) {
             
             // 根据缩放调整字体大小
             if (icons[i].scale > 1.5f) {
-                lv_obj_set_style_text_font(icons[i].label, &lv_font_montserrat_14, LV_PART_MAIN);
+                lv_obj_set_style_text_font(icons[i].label, &lv_font_montserrat_14, 0);
             } else if (icons[i].scale > 1.2f) {
-                lv_obj_set_style_text_font(icons[i].label, &lv_font_montserrat_12, LV_PART_MAIN);
+                lv_obj_set_style_text_font(icons[i].label, &lv_font_montserrat_12, 0);
             } else {
-                lv_obj_set_style_text_font(icons[i].label, &lv_font_montserrat_12, LV_PART_MAIN);
+                lv_obj_set_style_text_font(icons[i].label, &lv_font_montserrat_12, 0);
             }
         } else {
             // 隐藏不可见的图标以提高性能
@@ -387,38 +390,92 @@ static void icon_click_event_cb(lv_event_t * e) {
                 lv_screen_load(lv_screen_active());  // 或者指向主时钟屏幕
                 ESP_LOGI(TAG, "Switched to Clock");
             } else if (strcmp(app_name, "TV") == 0) {
-                ESP_LOGI(TAG, "TV app clicked, attempting to load image...");
+                ESP_LOGI(TAG, "TV app clicked, loading image viewer...");
                 
-                lv_obj_t * img;
-                img = lv_image_create(lv_screen_active());
-                if (img == NULL) {
-                    ESP_LOGE(TAG, "Failed to create image object");
-                    return;
-                }
-                ESP_LOGI(TAG, "Image object created successfully");
+                // 检查内存状况
+                size_t free_heap = esp_get_free_heap_size();
+                size_t min_free_heap = esp_get_minimum_free_heap_size();
+                ESP_LOGI(TAG, "Free heap: %zu bytes, Min free heap: %zu bytes", free_heap, min_free_heap);
                 
+                // 创建图片显示屏幕
+                lv_obj_t *image_screen = lv_obj_create(NULL);
+                lv_obj_set_style_bg_color(image_screen, lv_color_black(), LV_PART_MAIN);
+                
+                // 添加内存信息标签（仅在左上角显示）
+                lv_obj_t *mem_label = lv_label_create(image_screen);
+                char mem_text[120];
+                snprintf(mem_text, sizeof(mem_text), "RAM: %zuKB", free_heap/1024);
+                lv_label_set_text(mem_label, mem_text);
+                lv_obj_set_style_text_color(mem_label, lv_color_white(), LV_PART_MAIN);
+                lv_obj_set_style_text_font(mem_label, &lv_font_montserrat_12, 0);
+                lv_obj_align(mem_label, LV_ALIGN_TOP_LEFT, 10, 10);
+                
+                // 尝试加载指定图片
                 const char* image_path = "A:/sdcard/image/pexels1.png";
-                ESP_LOGI(TAG, "Attempting to load image from: %s", image_path);
                 
-                // 设置图片源
-                lv_image_set_src(img, image_path);
+                ESP_LOGI(TAG, "Loading image: %s", image_path);
                 
-                // 检查图片是否加载成功
-                const void* src = lv_image_get_src(img);
-                if (src == NULL) {
-                    ESP_LOGE(TAG, "Image source is NULL, failed to load: %s", image_path);
-                    ESP_LOGE(TAG, "Possible reasons:");
-                    ESP_LOGE(TAG, "1. File doesn't exist at the specified path");
-                    ESP_LOGE(TAG, "2. File system not mounted correctly");
-                    ESP_LOGE(TAG, "3. File format not supported");
-                    ESP_LOGE(TAG, "4. A: drive not configured in LVGL");
+                lv_obj_t * img = lv_image_create(image_screen);
+                if (img != NULL) {
+                    lv_image_set_src(img, image_path);
+                    
+                    // 检查是否加载成功
+                    const void* src = lv_image_get_src(img);
+                    if (src != NULL) {
+                        ESP_LOGI(TAG, "✓ Image loaded successfully: %s", image_path);
+                        
+                        // 居中显示图片
+                        lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+                        
+                        // 设置图片适应屏幕大小
+                        lv_obj_set_size(img, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+                        
+                        // 检查加载后的内存
+                        size_t free_after = esp_get_free_heap_size();
+                        ESP_LOGI(TAG, "Memory after loading: %zu bytes (used: %zu)", 
+                                 free_after, free_heap - free_after);
+                        
+                        // 更新内存显示
+                        snprintf(mem_text, sizeof(mem_text), "RAM: %zuKB\nUsed: %zuKB", 
+                                 free_after/1024, (free_heap - free_after)/1024);
+                        lv_label_set_text(mem_label, mem_text);
+                        
+                        // 添加点击返回提示
+                        lv_obj_t *hint_label = lv_label_create(image_screen);
+                        lv_label_set_text(hint_label, "Tap to return");
+                        lv_obj_set_style_text_color(hint_label, lv_color_white(), LV_PART_MAIN);
+                        lv_obj_set_style_text_font(hint_label, &lv_font_montserrat_12, 0);
+                        lv_obj_align(hint_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+                        
+                    } else {
+                        ESP_LOGW(TAG, "✗ Failed to load image: %s", image_path);
+                        lv_obj_del(img);  // 清理失败的对象
+                        
+                        // 显示错误信息
+                        lv_obj_t *error_label = lv_label_create(image_screen);
+                        lv_label_set_text(error_label, "Image not found\n\nTap to return");
+                        lv_obj_set_style_text_color(error_label, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
+                        lv_obj_set_style_text_align(error_label, LV_TEXT_ALIGN_CENTER, 0);
+                        lv_obj_align(error_label, LV_ALIGN_CENTER, 0, 0);
+                    }
                 } else {
-                    ESP_LOGI(TAG, "Image loaded successfully from: %s", image_path);
+                    ESP_LOGE(TAG, "✗ Failed to create image object");
+                    
+                    // 显示错误信息
+                    lv_obj_t *error_label = lv_label_create(image_screen);
+                    lv_label_set_text(error_label, "Failed to create image\n\nTap to return");
+                    lv_obj_set_style_text_color(error_label, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
+                    lv_obj_set_style_text_align(error_label, LV_TEXT_ALIGN_CENTER, 0);
+                    lv_obj_align(error_label, LV_ALIGN_CENTER, 0, 0);
                 }
                 
-                lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
-                lv_obj_move_foreground(img);
-                ESP_LOGI(TAG, "Image positioned at center of screen");
+                // 添加点击返回功能
+                lv_obj_add_flag(image_screen, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_add_event_cb(image_screen, image_screen_click_cb, LV_EVENT_CLICKED, NULL);
+                
+                // 切换到图片屏幕
+                lv_scr_load_anim(image_screen, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+                ESP_LOGI(TAG, "Switched to image viewer screen");
             }
             // 可以在这里添加其他应用的处理
         }
@@ -742,4 +799,15 @@ void destroy_honeycomb_menu(void) {
 // 主设置函数 - 修改为兼容性函数
 void home_screen_custom_setup() {
     show_honeycomb_menu();
+}
+
+// 图片屏幕点击回调函数
+static void image_screen_click_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        // 返回蜂窝菜单
+        show_honeycomb_menu();
+        // 删除图片屏幕
+        lv_obj_t *screen_to_delete = lv_event_get_target(e);
+        lv_obj_del_async(screen_to_delete);
+    }
 }
