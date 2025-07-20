@@ -34,7 +34,7 @@ static const char *TAG = "MENU_SCREEN";
 // Apple Watch 应用名称 - 重复有功能的应用以便测试
 static const char* app_names[SCREEN_BODY_MAX] = {
     "Clock", "MPU6050", "Files", "Music", "Photos", "TV", "Clock",
-    "MPU6050", "Files", "Music", "Photos", "TV", "Clock", "MPU6050",
+    "TEST", "Files", "Music", "Photos", "TV", "Clock", "MPU6050",
     "Files", "Music", "Photos", "TV", "Clock", "MPU6050", "Files",
     "Music", "Photos", "TV", "Clock", "MPU6050", "Files", "Music",
     "Photos", "TV", "Clock", "MPU6050", "Files", "Music", "Photos",
@@ -474,8 +474,13 @@ static void icon_click_event_cb(lv_event_t * e) {
                 lv_obj_add_event_cb(image_screen, image_screen_click_cb, LV_EVENT_CLICKED, NULL);
                 
                 // 切换到图片屏幕
-                lv_scr_load_anim(image_screen, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+                lv_scr_load_anim(image_screen, LV_SCR_LOAD_ANIM_NONE, 0 ,0,false);
                 ESP_LOGI(TAG, "Switched to image viewer screen");
+            } else if (strcmp(app_name, "TEST") == 0) {
+                ESP_LOGI(TAG, "TEST app clicked, starting MP3 test...");
+                
+                // 调用MP3测试函数
+                music_player_test_play_direct();
             }
             // 可以在这里添加其他应用的处理
         }

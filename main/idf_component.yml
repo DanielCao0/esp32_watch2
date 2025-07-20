@@ -23,4 +23,7 @@ dependencies:
   led_strip:
     version: '*'
     public: true
+
   espressif/mpu6050: ^1.2.0
+
+  chmorgan/esp-audio-player: "^1.0.7"

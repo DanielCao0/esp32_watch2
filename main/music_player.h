@@ -45,4 +45,22 @@ esp_err_t music_player_previous(void);
 void music_player_set_visible(bool visible);
 lv_obj_t* get_music_player_screen(void);
 
+// 新增函数声明
+esp_err_t music_player_init(void);
+esp_err_t music_player_deinit(void);
+void music_player_set_volume(float volume); // 0.0 - 2.0
+float music_player_get_volume(void);
+player_state_t music_player_get_state(void);
+int music_player_get_current_index(void);
+const char* music_player_get_current_title(void);
+
+// 测试函数声明
+void music_player_test_play_direct(void);
+
+// 任务管理函数声明
+esp_err_t music_player_task_create(void);
+esp_err_t music_player_task_delete(void);
+void music_player_task_suspend(void);
+void music_player_task_resume(void);
+
 #endif // MUSIC_PLAYER_H
